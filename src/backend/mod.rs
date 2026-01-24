@@ -1,8 +1,10 @@
+#[cfg(feature = "bedrock")]
 mod bedrock;
 mod claude;
 mod codex;
 mod gemini;
 
+#[cfg(feature = "bedrock")]
 pub use bedrock::BedrockBackend;
 pub use claude::ClaudeBackend;
 
@@ -46,6 +48,7 @@ pub fn create_claude_backend(config: &Config) -> Result<ClaudeBackend> {
     ClaudeBackend::new(backend_config)
 }
 
+#[cfg(feature = "bedrock")]
 pub async fn create_bedrock_backend(config: &Config) -> Result<BedrockBackend> {
     let backend_config = config
         .backends
