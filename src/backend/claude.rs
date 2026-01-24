@@ -168,7 +168,7 @@ impl ClaudeBackend {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
 
-        if !output.status.success() && stdout.is_empty() {
+        if !output.status.success() {
             anyhow::bail!("Claude CLI failed: {}", stderr);
         }
 
