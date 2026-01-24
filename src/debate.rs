@@ -31,7 +31,7 @@ impl Debate {
     }
 
     pub async fn run(&self) -> Result<String> {
-        println!("{}", "Council Debate".cyan().bold());
+        println!("{}", "Lok Debate".cyan().bold());
         println!("{}", "=".repeat(50).dimmed());
         println!("Topic: {}", self.topic);
         println!();
@@ -183,7 +183,7 @@ impl Debate {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        format!("Council reached consensus:\n\n{}", summary)
+        format!("Lok reached consensus:\n\n{}", summary)
     }
 
     fn summarize_disagreement(&self, positions: &[Position]) -> String {
@@ -194,7 +194,7 @@ impl Debate {
             .join("\n\n");
 
         format!(
-            "Council has differing views:\n\n{}\n\n\
+            "Lok has differing views:\n\n{}\n\n\
             Consider both perspectives when making your decision.",
             summary
         )

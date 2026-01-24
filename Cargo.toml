@@ -1,5 +1,5 @@
 [package]
-name = "council"
+name = "lok"
 version = "0.1.0"
 edition = "2021"
 description = "Multi-LLM orchestration tool for code analysis"

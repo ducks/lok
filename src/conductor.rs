@@ -112,7 +112,7 @@ impl Conductor {
             .join("\n");
 
         format!(
-            r#"You are the Council Conductor, an AI orchestrator that delegates tasks to specialized LLM backends.
+            r#"You are the Lok Conductor, an AI orchestrator that delegates tasks to specialized LLM backends.
 
 Available backends:
 {}

@@ -13,7 +13,7 @@ use colored::Colorize;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "council")]
+#[command(name = "lok")]
 #[command(about = "Multi-LLM orchestration tool for code analysis")]
 #[command(version)]
 struct Cli {
@@ -55,7 +55,7 @@ enum Commands {
         dir: PathBuf,
     },
 
-    /// Initialize a new council.toml config file
+    /// Initialize a new lok.toml config file
     Init,
 
     /// List available backends

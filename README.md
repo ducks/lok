@@ -1,10 +1,22 @@
-# Council
+# Lok
 
 Multi-LLM orchestration tool for code analysis. Run queries across multiple LLM
 backends in parallel, aggregate results, and execute predefined analysis tasks.
 
 Features smart delegation (knowing which backend suits which task), multi-round
 debates between backends, and team mode for coordinated analysis.
+
+## Why "Lok"?
+
+The name has two meanings:
+
+1. **Swedish/German** - short for "lokomotiv/Lokomotive" (locomotive). The tool
+   has a `conduct` command where an AI conductor sends out *trained* models down
+   the tracks.
+
+2. **Sanskrit/Hindi** - "lok" (लोक) means "world" or "people", as in "Lok Sabha"
+   (People's Assembly). Fits the idea of multiple agents working together as a
+   collective.
 
 ## Prerequisites
 
@@ -21,46 +33,46 @@ npm install -g @openai/codex
 ## Installation
 
 ```bash
-cd ~/dev/council
+cd ~/dev/lok
 nix-shell --run "cargo build --release"
 
-# Binary at target/release/council
-# Or run directly: nix-shell --run "./target/release/council --help"
+# Binary at target/release/lok
+# Or run directly: nix-shell --run "./target/release/lok --help"
 ```
 
 ## Usage
 
 ```bash
 # Ask all configured backends a question
-council ask "Find N+1 queries in this codebase"
+lok ask "Find N+1 queries in this codebase"
 
 # Ask specific backend(s)
-council ask --backend codex "Find dead code"
-council ask --backend codex,gemini "Review this code"
+lok ask --backend codex "Find dead code"
+lok ask --backend codex,gemini "Review this code"
 
 # Smart mode: auto-select best backend for the task
-council smart "Find N+1 queries"      # Uses codex (good for patterns)
-council smart "Security audit"         # Uses gemini (good for deep analysis)
+lok smart "Find N+1 queries"      # Uses codex (good for patterns)
+lok smart "Security audit"         # Uses gemini (good for deep analysis)
 
 # Suggest which backend to use without running
-council suggest "Find SQL injection vulnerabilities"
+lok suggest "Find SQL injection vulnerabilities"
 
 # Team mode: smart delegation with optional debate
-council team "Analyze this codebase for issues"
-council team --debate "Should we use async here?"
+lok team "Analyze this codebase for issues"
+lok team --debate "Should we use async here?"
 
 # Debate mode: multi-round discussion between backends
-council debate "What's the best way to handle auth?"
+lok debate "What's the best way to handle auth?"
 
 # Run predefined tasks
-council hunt .     # Bug hunt (N+1, dead code)
-council audit .    # Security audit
+lok hunt .     # Bug hunt (N+1, dead code)
+lok audit .    # Security audit
 
 # List available backends
-council backends
+lok backends
 
 # Initialize config file
-council init
+lok init
 ```
 
 Note: Codex requires being in a git repo it trusts. Run from your project
@@ -69,7 +81,7 @@ directory.
 ## Example Output
 
 ```
-$ council hunt .
+$ lok hunt .
 
 Task: hunt
 Find bugs and code issues
@@ -94,8 +106,8 @@ Find bugs and code issues
 
 ## Configuration
 
-Council works without config (uses defaults). For customization, create
-`council.toml` in your project or `~/.config/council/council.toml`:
+Lok works without config (uses defaults). For customization, create
+`lok.toml` in your project or `~/.config/lok/lok.toml`:
 
 ```toml
 [defaults]
@@ -134,7 +146,7 @@ prompts = [
 
 ## Smart Delegation
 
-Council knows which backend suits which task:
+Lok knows which backend suits which task:
 
 | Task Type | Best Backend | Why |
 |-----------|--------------|-----|
@@ -143,11 +155,11 @@ Council knows which backend suits which task:
 | Security audit | gemini | Thorough, investigative, goes deep |
 | Architecture review | gemini | Multi-step analysis, considers tradeoffs |
 
-Use `council suggest "your task"` to see recommendations without running.
+Use `lok suggest "your task"` to see recommendations without running.
 
 ## Backends
 
-Council wraps existing LLM CLIs as pluggable backends:
+Lok wraps existing LLM CLIs as pluggable backends:
 
 | Backend | CLI | Strengths |
 |---------|-----|-----------|
@@ -168,12 +180,12 @@ pub trait Backend: Send + Sync {
 
 ## WIP: Conductor Mode
 
-The `council conduct` command runs Claude as an orchestrating agent that
+The `lok conduct` command runs Claude as an orchestrating agent that
 delegates to other backends. Currently requires Claude API setup (WIP to
 simplify to CLI wrapper).
 
 ```bash
-council conduct "Find and fix the most impactful performance issues"
+lok conduct "Find and fix the most impactful performance issues"
 ```
 
 ## Development

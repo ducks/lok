@@ -33,7 +33,7 @@ fn default_timeout() -> u64 {
 }
 
 fn default_output_dir() -> String {
-    "/tmp/council".to_string()
+    "/tmp/lok".to_string()
 }
 
 impl Default for Defaults {
@@ -191,13 +191,13 @@ pub fn load_config(path: Option<&Path>) -> Result<Config> {
     }
 
     // Try current directory
-    if let Ok(content) = fs::read_to_string("council.toml") {
-        return toml::from_str(&content).context("Failed to parse council.toml");
+    if let Ok(content) = fs::read_to_string("lok.toml") {
+        return toml::from_str(&content).context("Failed to parse lok.toml");
     }
 
     // Try home directory
     if let Some(home) = dirs::home_dir() {
-        let home_config = home.join(".config/council/council.toml");
+        let home_config = home.join(".config/lok/lok.toml");
         if let Ok(content) = fs::read_to_string(&home_config) {
             return toml::from_str(&content).context("Failed to parse config file");
         }
@@ -211,11 +211,11 @@ pub fn init_config() -> Result<()> {
     let config = Config::default();
     let content = toml::to_string_pretty(&config)?;
 
-    if Path::new("council.toml").exists() {
-        anyhow::bail!("council.toml already exists");
+    if Path::new("lok.toml").exists() {
+        anyhow::bail!("lok.toml already exists");
     }
 
-    fs::write("council.toml", content)?;
-    println!("Created council.toml");
+    fs::write("lok.toml", content)?;
+    println!("Created lok.toml");
     Ok(())
 }
