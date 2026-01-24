@@ -114,6 +114,9 @@ enum Commands {
         #[arg(long)]
         debate: bool,
     },
+
+    /// Check which backends are available and ready
+    Doctor,
 }
 
 #[tokio::main]
@@ -193,6 +196,74 @@ async fn main() -> Result<()> {
             println!();
             println!("{}", "=".repeat(50).dimmed());
             println!("{}", result);
+        }
+        Commands::Doctor => {
+            println!("{}", "Lok Doctor".cyan().bold());
+            println!("{}", "=".repeat(50).dimmed());
+            println!();
+            println!(
+                "Lok is an orchestration layer for LLM backends. It's the brain\n\
+                that coordinates the arms you already have installed.\n"
+            );
+            println!("{}", "Checking backends...".yellow());
+            println!();
+
+            let checks = vec![
+                ("codex", "which codex", "npm install -g @openai/codex"),
+                ("gemini", "which npx", "Install Node.js (npx comes with npm)"),
+            ];
+
+            let mut available = 0;
+            for (name, check_cmd, install_hint) in &checks {
+                let status = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(check_cmd)
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
+
+                if status {
+                    println!("  {} {} - ready", "✓".green(), name);
+                    available += 1;
+                } else {
+                    println!("  {} {} - not found", "✗".red(), name);
+                    println!("    {}", install_hint.dimmed());
+                }
+            }
+
+            // Check API keys
+            println!();
+            println!("{}", "Checking API keys...".yellow());
+            println!();
+
+            let keys = vec![
+                ("ANTHROPIC_API_KEY", "claude backend"),
+                ("GOOGLE_API_KEY", "gemini backend"),
+                ("AWS_PROFILE", "bedrock backend (or AWS_ACCESS_KEY_ID)"),
+            ];
+
+            for (key, desc) in &keys {
+                if std::env::var(key).is_ok() {
+                    println!("  {} {} - set ({})", "✓".green(), key, desc);
+                } else {
+                    println!("  {} {} - not set ({})", "○".yellow(), key, desc);
+                }
+            }
+
+            println!();
+            if available > 0 {
+                println!(
+                    "{} {} backend(s) ready. Run {} to see them.",
+                    "✓".green(),
+                    available,
+                    "lok backends".cyan()
+                );
+            } else {
+                println!(
+                    "{} No backends found. Install at least one LLM CLI to get started.",
+                    "!".red()
+                );
+            }
         }
     }
 
