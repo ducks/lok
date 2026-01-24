@@ -32,12 +32,27 @@ npm install -g @openai/codex
 
 ## Installation
 
+### From crates.io
+
+```bash
+cargo install lok
+```
+
+### From source
+
+```bash
+git clone https://github.com/ducks/lok
+cd lok
+cargo build --release
+
+# Binary at target/release/lok
+```
+
+### With Nix
+
 ```bash
 cd ~/dev/lok
 nix-shell --run "cargo build --release"
-
-# Binary at target/release/lok
-# Or run directly: nix-shell --run "./target/release/lok --help"
 ```
 
 ## Usage
