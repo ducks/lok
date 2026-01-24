@@ -102,6 +102,15 @@ pub async fn run_query(
     prompt: &str,
     cwd: &Path,
 ) -> Result<Vec<QueryResult>> {
+    run_query_with_timeout(backends, prompt, cwd, 300).await
+}
+
+pub async fn run_query_with_timeout(
+    backends: &[Arc<dyn Backend>],
+    prompt: &str,
+    cwd: &Path,
+    timeout_secs: u64,
+) -> Result<Vec<QueryResult>> {
     let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
 
     let pb = ProgressBar::new(backends.len() as u64);
@@ -124,7 +133,7 @@ pub async fn run_query(
                 pb.set_message(format!("Querying {}...", backend.name()));
 
                 let result = tokio::time::timeout(
-                    Duration::from_secs(300),
+                    Duration::from_secs(timeout_secs),
                     backend.query(&prompt, &cwd),
                 )
                 .await;
