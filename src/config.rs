@@ -33,7 +33,10 @@ fn default_timeout() -> u64 {
 }
 
 fn default_output_dir() -> String {
-    "/tmp/lok".to_string()
+    std::env::temp_dir()
+        .join("lok")
+        .to_string_lossy()
+        .to_string()
 }
 
 impl Default for Defaults {
