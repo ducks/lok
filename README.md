@@ -168,6 +168,7 @@ Lok wraps existing LLM CLIs as pluggable backends:
 |---------|-----|-----------|
 | codex | `codex` | Efficient, direct answers, good for patterns |
 | gemini | `npx @google/gemini-cli` | Thorough, investigative, goes deep |
+| claude | `claude` or API | Balanced, good for orchestration |
 
 Adding a new backend requires implementing the `Backend` trait in
 `src/backend/`:
@@ -181,15 +182,52 @@ pub trait Backend: Send + Sync {
 }
 ```
 
-## WIP: Conductor Mode
+## Claude Backend
 
-The `lok conduct` command runs Claude as an orchestrating agent that
-delegates to other backends. Currently requires Claude API setup (WIP to
-simplify to CLI wrapper).
+Claude can run in two modes:
+
+### CLI Mode (Simple, Recommended)
+
+Uses the `claude` CLI (Claude Code). No API key needed if you're already
+authenticated with Claude Code.
+
+```toml
+[backends.claude]
+enabled = true
+command = "claude"
+model = "sonnet"  # optional
+```
 
 ```bash
+lok ask --backend claude "Explain this code"
+```
+
+### API Mode (For Conductor)
+
+Uses the Anthropic API directly. Required for `lok conduct` which needs
+multi-turn tool use.
+
+```toml
+[backends.claude]
+enabled = true
+api_key_env = "ANTHROPIC_API_KEY"
+model = "claude-sonnet-4-20250514"
+# Note: no 'command' field = API mode
+```
+
+## Conductor Mode
+
+The `lok conduct` command runs Claude as an orchestrating agent that
+delegates to other backends. Requires Claude API mode (set `ANTHROPIC_API_KEY`).
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
 lok conduct "Find and fix the most impactful performance issues"
 ```
+
+The conductor will analyze your request, decide which backends to query,
+review results, and synthesize a final answer. It can do multiple rounds
+of queries if needed.
 
 ## Development
 
