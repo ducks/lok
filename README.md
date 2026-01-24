@@ -3,6 +3,9 @@
 Multi-LLM orchestration tool for code analysis. Run queries across multiple LLM
 backends in parallel, aggregate results, and execute predefined analysis tasks.
 
+Features smart delegation (knowing which backend suits which task), multi-round
+debates between backends, and team mode for coordinated analysis.
+
 ## Prerequisites
 
 You need the LLM CLIs installed and authenticated:
@@ -34,6 +37,20 @@ council ask "Find N+1 queries in this codebase"
 # Ask specific backend(s)
 council ask --backend codex "Find dead code"
 council ask --backend codex,gemini "Review this code"
+
+# Smart mode: auto-select best backend for the task
+council smart "Find N+1 queries"      # Uses codex (good for patterns)
+council smart "Security audit"         # Uses gemini (good for deep analysis)
+
+# Suggest which backend to use without running
+council suggest "Find SQL injection vulnerabilities"
+
+# Team mode: smart delegation with optional debate
+council team "Analyze this codebase for issues"
+council team --debate "Should we use async here?"
+
+# Debate mode: multi-round discussion between backends
+council debate "What's the best way to handle auth?"
 
 # Run predefined tasks
 council hunt .     # Bug hunt (N+1, dead code)
@@ -114,6 +131,19 @@ prompts = [
   { name = "auth", prompt = "Find auth bypass..." },
 ]
 ```
+
+## Smart Delegation
+
+Council knows which backend suits which task:
+
+| Task Type | Best Backend | Why |
+|-----------|--------------|-----|
+| N+1 queries, code smells | codex | Efficient, direct pattern matching |
+| Dead code, cleanup | codex | Quick analysis, no investigation needed |
+| Security audit | gemini | Thorough, investigative, goes deep |
+| Architecture review | gemini | Multi-step analysis, considers tradeoffs |
+
+Use `council suggest "your task"` to see recommendations without running.
 
 ## Backends
 
