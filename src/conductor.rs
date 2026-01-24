@@ -224,8 +224,15 @@ Always explain your reasoning briefly before making tool calls."#,
                 "Thinking...".dimmed()
             );
 
+            let model = self
+                .config
+                .backends
+                .get("claude")
+                .and_then(|c| c.model.clone())
+                .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
+
             let request = serde_json::json!({
-                "model": "claude-sonnet-4-20250514",
+                "model": model,
                 "max_tokens": 4096,
                 "system": system,
                 "tools": tools,
