@@ -167,9 +167,18 @@ async fn main() -> Result<()> {
         }
         Commands::Smart { prompt, dir } => {
             let delegator = delegation::Delegator::new();
-            let best = delegator.best_for(&prompt);
+            let recommendations = delegator.recommend(&prompt);
 
-            match best {
+            // Try each recommended backend in order until one is available
+            let mut selected_backend = None;
+            for rec in &recommendations {
+                if backend::get_backends(&config, Some(&rec.name)).is_ok() {
+                    selected_backend = Some(rec.name.as_str());
+                    break;
+                }
+            }
+
+            match selected_backend {
                 Some(backend_name) => {
                     println!(
                         "{} Using {} for this task",
@@ -183,7 +192,7 @@ async fn main() -> Result<()> {
                     output::print_results(&results);
                 }
                 None => {
-                    println!("{} No suitable backend found, using all", "smart:".yellow());
+                    println!("{} No recommended backend available, using all", "smart:".yellow());
                     let backends = backend::get_backends(&config, None)?;
                     let results = backend::run_query(&backends, &prompt, &dir).await?;
                     output::print_results(&results);
