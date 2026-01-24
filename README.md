@@ -64,6 +64,10 @@ lok team --debate "Should we use async here?"
 # Debate mode: multi-round discussion between backends
 lok debate "What's the best way to handle auth?"
 
+# Spawn mode: parallel agents working on subtasks
+lok spawn "Build a todo app with frontend and backend"
+lok spawn "task" --agent "api:Build REST endpoints" --agent "ui:Build React components"
+
 # Run predefined tasks
 lok hunt .     # Bug hunt (N+1, dead code)
 lok audit .    # Security audit
@@ -229,12 +233,72 @@ The conductor will analyze your request, decide which backends to query,
 review results, and synthesize a final answer. It can do multiple rounds
 of queries if needed.
 
+## Architecture
+
+Lok's orchestration flow, especially in spawn mode:
+
+```
+                                ┌─────────────┐
+                                │    USER     │
+                                │   (task)    │
+                                └──────┬──────┘
+                                       │
+                                       ▼
+                ┌──────────────────────────────────────────┐
+                │             CONDUCTOR (BRAIN)            │
+                │                                          │
+                │  ┌────────────────────────────────────┐  │
+                │  │          PLANNING PHASE            │  │
+                │  │  • Analyze task complexity         │  │
+                │  │  • Break into parallel subtasks    │  │
+                │  │  • Assign backends via delegator   │  │
+                │  └────────────────────────────────────┘  │
+                └──────────────────┬───────────────────────┘
+                                   │
+          ┌────────────────────────┼────────────────────────┐
+          │                        │                        │
+          ▼                        ▼                        ▼
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│   AGENT #1      │      │   AGENT #2      │      │   AGENT #3      │
+│   "frontend"    │      │   "backend"     │      │   "database"    │
+│                 │      │                 │      │                 │
+│  ┌───────────┐  │      │  ┌───────────┐  │      │  ┌───────────┐  │
+│  │  CODEX    │  │      │  │  GEMINI   │  │      │  │  CODEX    │  │
+│  └───────────┘  │      │  └───────────┘  │      │  └───────────┘  │
+└────────┬────────┘      └────────┬────────┘      └────────┬────────┘
+         │                        │                        │
+         │       ═══════ PARALLEL EXECUTION ═══════        │
+         │                        │                        │
+         └────────────────────────┼────────────────────────┘
+                                  │
+                                  ▼
+                ┌──────────────────────────────────────────┐
+                │           SUMMARIZATION PHASE            │
+                │                                          │
+                │  • Collect all agent outputs             │
+                │  • Report success/failure per agent      │
+                │  • Aggregate into final summary          │
+                └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+                           ┌────────────┐
+                           │   RESULT   │
+                           └────────────┘
+```
+
+The spawn command implements this pattern:
+1. **Plan** - Break task into 2-4 parallel subtasks (via Claude API or fallback)
+2. **Delegate** - Assign each subtask to the best backend
+3. **Execute** - Run all agents in parallel with shared context
+4. **Summarize** - Collect results and report status
+
 ## Development
 
 ```bash
 nix-shell              # Enter dev environment
 cargo build            # Build
 cargo run -- ask "..." # Run
+cargo test             # Test
 cargo clippy           # Lint
 ```
 
