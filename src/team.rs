@@ -41,13 +41,22 @@ impl Team {
                 .yellow()
         );
 
-        // Get recommendations
+        // Get recommendations filtered by available backends
         let recommendations = self.delegator.recommend(task);
-        if recommendations.is_empty() {
-            return Err(anyhow::anyhow!("No suitable backends for this task"));
-        }
+        let available_names: Vec<_> = self.backends.iter().map(|b| b.name()).collect();
 
-        let primary = &recommendations[0];
+        // Find first recommended backend that's actually available
+        let primary = recommendations
+            .iter()
+            .find(|r| available_names.contains(&r.name.as_str()))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No suitable backends available. Recommended: {:?}, Available: {:?}",
+                    recommendations.iter().map(|r| &r.name).collect::<Vec<_>>(),
+                    available_names
+                )
+            })?;
+
         println!(
             "Primary: {} - {}",
             primary.name.to_uppercase().green().bold(),
@@ -55,12 +64,12 @@ impl Team {
         );
         println!();
 
-        // Find the primary backend
+        // Find the primary backend (guaranteed to exist now)
         let primary_backend = self
             .backends
             .iter()
             .find(|b| b.name() == primary.name)
-            .ok_or_else(|| anyhow::anyhow!("Backend {} not available", primary.name))?;
+            .unwrap();
 
         // Query primary
         println!(

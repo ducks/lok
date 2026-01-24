@@ -44,6 +44,7 @@ impl Delegator {
                     TaskCategory::CodeAnalysis,
                     TaskCategory::DeadCode,
                     TaskCategory::Performance,
+                    TaskCategory::General, // fallback for general tasks
                 ],
                 style: "Efficient, direct answers. Good for pattern matching and quick analysis."
                     .to_string(),
@@ -57,6 +58,7 @@ impl Delegator {
                 strengths: vec![
                     TaskCategory::SecurityAudit,
                     TaskCategory::Architecture,
+                    TaskCategory::General, // fallback for general tasks
                 ],
                 style: "Thorough, investigative. Goes deep with multi-step analysis.".to_string(),
             },
