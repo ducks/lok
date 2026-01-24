@@ -10,6 +10,10 @@ pkgs.mkShell {
     clippy
     rustfmt
 
+    # For reqwest/openssl
+    openssl
+    pkg-config
+
     # For LLM CLI backends
     nodejs_22
     nodePackages.npm

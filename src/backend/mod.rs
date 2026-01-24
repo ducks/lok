@@ -1,5 +1,10 @@
+mod bedrock;
+mod claude;
 mod codex;
 mod gemini;
+
+pub use bedrock::BedrockBackend;
+pub use claude::ClaudeBackend;
 
 use crate::config::{BackendConfig, Config};
 use anyhow::Result;
@@ -28,8 +33,25 @@ pub fn create_backend(name: &str, config: &BackendConfig) -> Result<Arc<dyn Back
     match name {
         "codex" => Ok(Arc::new(codex::CodexBackend::new(config)?)),
         "gemini" => Ok(Arc::new(gemini::GeminiBackend::new(config)?)),
+        "claude" => Ok(Arc::new(claude::ClaudeBackend::new(config)?)),
         _ => anyhow::bail!("Unknown backend: {}", name),
     }
+}
+
+pub fn create_claude_backend(config: &Config) -> Result<ClaudeBackend> {
+    let backend_config = config
+        .backends
+        .get("claude")
+        .ok_or_else(|| anyhow::anyhow!("Claude backend not configured"))?;
+    ClaudeBackend::new(backend_config)
+}
+
+pub async fn create_bedrock_backend(config: &Config) -> Result<BedrockBackend> {
+    let backend_config = config
+        .backends
+        .get("bedrock")
+        .ok_or_else(|| anyhow::anyhow!("Bedrock backend not configured"))?;
+    BedrockBackend::new(backend_config).await
 }
 
 pub fn get_backends(

@@ -122,6 +122,20 @@ impl Default for Config {
             },
         );
 
+        backends.insert(
+            "claude".to_string(),
+            BackendConfig {
+                enabled: true,
+                command: None,
+                args: vec![],
+                parse: "raw".to_string(),
+                skip_lines: 0,
+                api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
+                model: Some("claude-sonnet-4-20250514".to_string()),
+                endpoint: None,
+            },
+        );
+
         let mut tasks = HashMap::new();
 
         tasks.insert(

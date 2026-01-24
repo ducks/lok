@@ -1,10 +1,12 @@
 mod backend;
+mod conductor;
 mod config;
 mod output;
 mod tasks;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use colored::Colorize;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -55,6 +57,16 @@ enum Commands {
 
     /// List available backends
     Backends,
+
+    /// Run with Claude as conductor (multi-round orchestration)
+    Conduct {
+        /// The task to accomplish
+        task: String,
+
+        /// Working directory for the analysis
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -83,6 +95,14 @@ async fn main() -> Result<()> {
         }
         Commands::Backends => {
             backend::list_backends(&config)?;
+        }
+        Commands::Conduct { task, dir } => {
+            let conductor = conductor::Conductor::new(&config)?;
+            let result = conductor.conduct(&task, &dir).await?;
+            println!();
+            println!("{}", "=== Final Result ===".green().bold());
+            println!();
+            println!("{}", result);
         }
     }
 
