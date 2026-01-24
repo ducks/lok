@@ -36,6 +36,15 @@ pub fn create_backend(name: &str, config: &BackendConfig) -> Result<Arc<dyn Back
         "codex" => Ok(Arc::new(codex::CodexBackend::new(config)?)),
         "gemini" => Ok(Arc::new(gemini::GeminiBackend::new(config)?)),
         "claude" => Ok(Arc::new(claude::ClaudeBackend::new(config)?)),
+        #[cfg(feature = "bedrock")]
+        "bedrock" => {
+            // BedrockBackend::new is async, need runtime
+            let rt = tokio::runtime::Handle::current();
+            let config = config.clone();
+            rt.block_on(async { Ok(Arc::new(bedrock::BedrockBackend::new(&config).await?) as Arc<dyn Backend>) })
+        }
+        #[cfg(not(feature = "bedrock"))]
+        "bedrock" => anyhow::bail!("Bedrock backend requires the 'bedrock' feature. Rebuild with: cargo build --features bedrock"),
         _ => anyhow::bail!("Unknown backend: {}", name),
     }
 }
