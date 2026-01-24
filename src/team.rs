@@ -151,10 +151,12 @@ impl Team {
     }
 }
 
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+fn truncate(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{}...", truncated)
     }
 }
