@@ -1,7 +1,7 @@
 # Lok
 
-Multi-LLM orchestration tool for code analysis. Run queries across multiple LLM
-backends in parallel, aggregate results, and execute predefined analysis tasks.
+Local orchestration layer for coordinating multiple LLM backends through a
+single control plane. Lok is the brain that controls the arms you already have.
 
 Features smart delegation (knowing which backend suits which task), multi-round
 debates between backends, and team mode for coordinated analysis.
@@ -70,6 +70,9 @@ lok audit .    # Security audit
 
 # List available backends
 lok backends
+
+# Check what's installed and ready
+lok doctor
 
 # Initialize config file
 lok init
