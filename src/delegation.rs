@@ -242,4 +242,116 @@ mod tests {
         let best = d.best_for("Security audit for SQL injection");
         assert_eq!(best, Some("gemini"));
     }
+
+    #[test]
+    fn test_classify_dead_code() {
+        let d = Delegator::new();
+        let cats = d.classify_task("Find unused functions and dead code");
+        assert!(cats.contains(&TaskCategory::DeadCode));
+    }
+
+    #[test]
+    fn test_classify_performance() {
+        let d = Delegator::new();
+        let cats = d.classify_task("Optimize slow database queries");
+        assert!(cats.contains(&TaskCategory::Performance));
+    }
+
+    #[test]
+    fn test_classify_architecture() {
+        let d = Delegator::new();
+        let cats = d.classify_task("Review the overall architecture and design patterns");
+        assert!(cats.contains(&TaskCategory::Architecture));
+    }
+
+    #[test]
+    fn test_classify_multiple_categories() {
+        let d = Delegator::new();
+        let cats = d.classify_task("Find security vulnerabilities and N+1 queries");
+        assert!(cats.contains(&TaskCategory::SecurityAudit));
+        assert!(cats.contains(&TaskCategory::CodeAnalysis));
+    }
+
+    #[test]
+    fn test_classify_general_fallback() {
+        let d = Delegator::new();
+        let cats = d.classify_task("What does this function do?");
+        assert!(cats.contains(&TaskCategory::General));
+        assert_eq!(cats.len(), 1);
+    }
+
+    #[test]
+    fn test_recommend_dead_code() {
+        let d = Delegator::new();
+        let best = d.best_for("Remove unused imports");
+        assert_eq!(best, Some("codex"));
+    }
+
+    #[test]
+    fn test_recommend_architecture() {
+        let d = Delegator::new();
+        let best = d.best_for("Review the project structure and organization");
+        // Both claude and gemini have Architecture in their strengths
+        assert!(best == Some("claude") || best == Some("gemini"));
+    }
+
+    #[test]
+    fn test_recommend_general_returns_backend() {
+        let d = Delegator::new();
+        let best = d.best_for("Explain this code");
+        // Should return something (codex or gemini have General in their strengths)
+        assert!(best.is_some());
+    }
+
+    #[test]
+    fn test_recommend_returns_multiple() {
+        let d = Delegator::new();
+        let recommendations = d.recommend("Find security issues and performance problems");
+        // Should return multiple backends
+        assert!(recommendations.len() >= 2);
+    }
+
+    #[test]
+    fn test_explain_contains_categories() {
+        let d = Delegator::new();
+        let explanation = d.explain("Find N+1 queries");
+        assert!(explanation.contains("CodeAnalysis"));
+    }
+
+    #[test]
+    fn test_explain_contains_recommendations() {
+        let d = Delegator::new();
+        let explanation = d.explain("Security audit");
+        assert!(explanation.contains("GEMINI") || explanation.contains("gemini"));
+    }
+
+    #[test]
+    fn test_case_insensitive_matching() {
+        let d = Delegator::new();
+        let cats_lower = d.classify_task("find n+1 queries");
+        let cats_upper = d.classify_task("FIND N+1 QUERIES");
+        let cats_mixed = d.classify_task("Find N+1 Queries");
+
+        assert_eq!(cats_lower, cats_upper);
+        assert_eq!(cats_lower, cats_mixed);
+    }
+
+    #[test]
+    fn test_delegator_default() {
+        let d = Delegator::default();
+        // Should work the same as new()
+        let best = d.best_for("Find N+1 queries");
+        assert_eq!(best, Some("codex"));
+    }
+
+    #[test]
+    fn test_backend_profiles_exist() {
+        let d = Delegator::new();
+        // All profiles should have strengths
+        let recommendations = d.recommend("anything");
+        for rec in recommendations {
+            assert!(!rec.strengths.is_empty());
+            assert!(!rec.style.is_empty());
+        }
+    }
 }
