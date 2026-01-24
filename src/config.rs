@@ -212,3 +212,151 @@ pub fn init_config() -> Result<()> {
     println!("Created lok.toml");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let config = Config::default();
+
+        // Check defaults
+        assert!(config.defaults.parallel);
+        assert_eq!(config.defaults.timeout, 300);
+
+        // Check default backends exist
+        assert!(config.backends.contains_key("codex"));
+        assert!(config.backends.contains_key("gemini"));
+        assert!(config.backends.contains_key("claude"));
+
+        // Check default tasks exist
+        assert!(config.backends.contains_key("codex"));
+        assert!(config.tasks.contains_key("hunt"));
+        assert!(config.tasks.contains_key("audit"));
+    }
+
+    #[test]
+    fn test_codex_backend_defaults() {
+        let config = Config::default();
+        let codex = config.backends.get("codex").unwrap();
+
+        assert!(codex.enabled);
+        assert_eq!(codex.command, Some("codex".to_string()));
+        assert_eq!(codex.parse, "json");
+        assert_eq!(codex.skip_lines, 0);
+    }
+
+    #[test]
+    fn test_gemini_backend_defaults() {
+        let config = Config::default();
+        let gemini = config.backends.get("gemini").unwrap();
+
+        assert!(gemini.enabled);
+        assert_eq!(gemini.command, Some("npx".to_string()));
+        assert_eq!(gemini.parse, "raw");
+        assert_eq!(gemini.skip_lines, 1);
+    }
+
+    #[test]
+    fn test_claude_backend_defaults() {
+        let config = Config::default();
+        let claude = config.backends.get("claude").unwrap();
+
+        assert!(claude.enabled);
+        assert!(claude.command.is_none()); // API-based, no command
+        assert!(claude.api_key_env.is_some());
+        assert!(claude.model.is_some());
+    }
+
+    #[test]
+    fn test_hunt_task_defaults() {
+        let config = Config::default();
+        let hunt = config.tasks.get("hunt").unwrap();
+
+        assert_eq!(hunt.description, Some("Find bugs and code issues".to_string()));
+        assert!(hunt.backends.contains(&"codex".to_string()));
+        assert!(!hunt.prompts.is_empty());
+    }
+
+    #[test]
+    fn test_parse_minimal_config() {
+        let toml_str = r#"
+[defaults]
+parallel = false
+timeout = 60
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+
+        assert!(!config.defaults.parallel);
+        assert_eq!(config.defaults.timeout, 60);
+        assert!(config.backends.is_empty());
+        assert!(config.tasks.is_empty());
+    }
+
+    #[test]
+    fn test_parse_custom_backend() {
+        let toml_str = r#"
+[backends.custom]
+enabled = true
+command = "my-llm"
+args = ["--flag", "value"]
+parse = "json"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let custom = config.backends.get("custom").unwrap();
+
+        assert!(custom.enabled);
+        assert_eq!(custom.command, Some("my-llm".to_string()));
+        assert_eq!(custom.args, vec!["--flag", "value"]);
+        assert_eq!(custom.parse, "json");
+    }
+
+    #[test]
+    fn test_parse_custom_task() {
+        let toml_str = r#"
+[tasks.review]
+description = "Code review"
+backends = ["codex", "gemini"]
+
+[[tasks.review.prompts]]
+name = "style"
+prompt = "Check code style"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let review = config.tasks.get("review").unwrap();
+
+        assert_eq!(review.description, Some("Code review".to_string()));
+        assert_eq!(review.backends, vec!["codex", "gemini"]);
+        assert_eq!(review.prompts.len(), 1);
+        assert_eq!(review.prompts[0].name, "style");
+    }
+
+    #[test]
+    fn test_backend_config_defaults() {
+        let toml_str = r#"
+[backends.minimal]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let minimal = config.backends.get("minimal").unwrap();
+
+        // Check default values are applied
+        assert!(minimal.enabled); // default_enabled
+        assert_eq!(minimal.parse, "raw"); // default_parse
+        assert!(minimal.args.is_empty()); // default empty vec
+        assert_eq!(minimal.skip_lines, 0); // default 0
+    }
+
+    #[test]
+    fn test_config_serialization_roundtrip() {
+        let original = Config::default();
+        let serialized = toml::to_string_pretty(&original).unwrap();
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+
+        // Check key fields survived roundtrip
+        assert_eq!(original.defaults.parallel, deserialized.defaults.parallel);
+        assert_eq!(original.defaults.timeout, deserialized.defaults.timeout);
+        assert_eq!(original.backends.len(), deserialized.backends.len());
+        assert_eq!(original.tasks.len(), deserialized.tasks.len());
+    }
+}
