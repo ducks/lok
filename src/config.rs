@@ -46,21 +46,14 @@ pub struct BackendConfig {
     pub command: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
-    #[serde(default = "default_parse")]
-    pub parse: String,
     #[serde(default)]
     pub skip_lines: usize,
     pub api_key_env: Option<String>,
     pub model: Option<String>,
-    pub endpoint: Option<String>,
 }
 
 fn default_enabled() -> bool {
     true
-}
-
-fn default_parse() -> String {
-    "raw".to_string()
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -93,11 +86,9 @@ impl Default for Config {
                     "-s".to_string(),
                     "read-only".to_string(),
                 ],
-                parse: "json".to_string(),
                 skip_lines: 0,
                 api_key_env: None,
                 model: None,
-                endpoint: None,
             },
         );
 
@@ -107,11 +98,9 @@ impl Default for Config {
                 enabled: true,
                 command: Some("npx".to_string()),
                 args: vec!["@google/gemini-cli".to_string()],
-                parse: "raw".to_string(),
                 skip_lines: 1,
                 api_key_env: None,
                 model: None,
-                endpoint: None,
             },
         );
 
@@ -121,11 +110,9 @@ impl Default for Config {
                 enabled: true,
                 command: None,
                 args: vec![],
-                parse: "raw".to_string(),
                 skip_lines: 0,
                 api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
                 model: Some("claude-sonnet-4-20250514".to_string()),
-                endpoint: None,
             },
         );
 
@@ -243,7 +230,6 @@ mod tests {
 
         assert!(codex.enabled);
         assert_eq!(codex.command, Some("codex".to_string()));
-        assert_eq!(codex.parse, "json");
         assert_eq!(codex.skip_lines, 0);
     }
 
@@ -254,7 +240,6 @@ mod tests {
 
         assert!(gemini.enabled);
         assert_eq!(gemini.command, Some("npx".to_string()));
-        assert_eq!(gemini.parse, "raw");
         assert_eq!(gemini.skip_lines, 1);
     }
 
@@ -304,7 +289,6 @@ timeout = 60
 enabled = true
 command = "my-llm"
 args = ["--flag", "value"]
-parse = "json"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let custom = config.backends.get("custom").unwrap();
@@ -312,7 +296,6 @@ parse = "json"
         assert!(custom.enabled);
         assert_eq!(custom.command, Some("my-llm".to_string()));
         assert_eq!(custom.args, vec!["--flag", "value"]);
-        assert_eq!(custom.parse, "json");
     }
 
     #[test]
@@ -345,7 +328,6 @@ prompt = "Check code style"
 
         // Check default values are applied
         assert!(minimal.enabled); // default_enabled
-        assert_eq!(minimal.parse, "raw"); // default_parse
         assert!(minimal.args.is_empty()); // default empty vec
         assert_eq!(minimal.skip_lines, 0); // default 0
     }

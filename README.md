@@ -125,13 +125,11 @@ timeout = 300
 enabled = true
 command = "codex"
 args = ["exec", "--json", "-s", "read-only"]
-parse = "json"
 
 [backends.gemini]
 enabled = true
 command = "npx"
 args = ["@google/gemini-cli"]
-parse = "raw"
 skip_lines = 1
 
 [tasks.hunt]
