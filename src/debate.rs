@@ -18,11 +18,7 @@ struct Position {
 }
 
 impl Debate {
-    pub fn new(
-        backends: Vec<Arc<dyn Backend>>,
-        topic: &str,
-        cwd: &Path,
-    ) -> Self {
+    pub fn new(backends: Vec<Arc<dyn Backend>>, topic: &str, cwd: &Path) -> Self {
         Self {
             backends,
             topic: topic.to_string(),
@@ -42,7 +38,10 @@ impl Debate {
         self.print_positions(&positions);
 
         if positions.len() < 2 {
-            return Ok(positions.first().map(|p| p.stance.clone()).unwrap_or_default());
+            return Ok(positions
+                .first()
+                .map(|p| p.stance.clone())
+                .unwrap_or_default());
         }
 
         // Round 2+: Responses to each other
@@ -68,7 +67,10 @@ impl Debate {
 
         // Final summary
         println!();
-        println!("{}", "[Final Positions - No Full Consensus]".yellow().bold());
+        println!(
+            "{}",
+            "[Final Positions - No Full Consensus]".yellow().bold()
+        );
         Ok(self.summarize_disagreement(&positions))
     }
 
@@ -140,7 +142,12 @@ impl Debate {
     fn print_positions(&self, positions: &[Position]) {
         for pos in positions {
             println!();
-            println!("{}", format!("=== {} ===", pos.backend.to_uppercase()).green().bold());
+            println!(
+                "{}",
+                format!("=== {} ===", pos.backend.to_uppercase())
+                    .green()
+                    .bold()
+            );
             println!("{}", pos.stance);
         }
     }

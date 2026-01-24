@@ -13,10 +13,7 @@ pub struct GeminiBackend {
 
 impl GeminiBackend {
     pub fn new(config: &BackendConfig) -> Result<Self> {
-        let command = config
-            .command
-            .clone()
-            .unwrap_or_else(|| "npx".to_string());
+        let command = config.command.clone().unwrap_or_else(|| "npx".to_string());
 
         let args = if config.args.is_empty() {
             vec!["@google/gemini-cli".to_string()]

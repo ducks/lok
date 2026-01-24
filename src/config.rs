@@ -274,7 +274,10 @@ mod tests {
         let config = Config::default();
         let hunt = config.tasks.get("hunt").unwrap();
 
-        assert_eq!(hunt.description, Some("Find bugs and code issues".to_string()));
+        assert_eq!(
+            hunt.description,
+            Some("Find bugs and code issues".to_string())
+        );
         assert!(hunt.backends.contains(&"codex".to_string()));
         assert!(!hunt.prompts.is_empty());
     }

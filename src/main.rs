@@ -169,7 +169,11 @@ async fn main() -> Result<()> {
             println!();
             println!("{}", result);
         }
-        Commands::Debate { topic, dir, backend } => {
+        Commands::Debate {
+            topic,
+            dir,
+            backend,
+        } => {
             let backends = backend::get_backends(&config, backend.as_deref())?;
             let debate = debate::Debate::new(backends, &topic, &dir);
             let result = debate.run().await?;
@@ -207,7 +211,10 @@ async fn main() -> Result<()> {
                     output::print_results(&results);
                 }
                 None => {
-                    println!("{} No recommended backend available, using all", "smart:".yellow());
+                    println!(
+                        "{} No recommended backend available, using all",
+                        "smart:".yellow()
+                    );
                     let backends = backend::get_backends(&config, None)?;
                     let results = backend::run_query(&backends, &prompt, &dir).await?;
                     output::print_results(&results);
@@ -235,7 +242,11 @@ async fn main() -> Result<()> {
             let checks = vec![
                 ("codex", "codex", "npm install -g @openai/codex"),
                 ("gemini", "npx", "Install Node.js (npx comes with npm)"),
-                ("claude", "claude", "Install Claude Code: https://claude.ai/claude-code"),
+                (
+                    "claude",
+                    "claude",
+                    "Install Claude Code: https://claude.ai/claude-code",
+                ),
             ];
 
             let mut available = 0;

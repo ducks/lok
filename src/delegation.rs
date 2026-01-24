@@ -164,10 +164,7 @@ impl Delegator {
         }
 
         // Sort by score descending, then by name for stability
-        recommendations.sort_by(|a, b| {
-            b.1.cmp(&a.1)
-                .then_with(|| a.0.name.cmp(&b.0.name))
-        });
+        recommendations.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.name.cmp(&b.0.name)));
 
         // Return profiles only
         recommendations.into_iter().map(|(p, _)| p).collect()

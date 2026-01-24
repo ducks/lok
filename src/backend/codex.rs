@@ -37,7 +37,11 @@ impl CodexBackend {
         for line in output.lines() {
             if line.contains("\"type\":\"item.completed\"") && line.contains("agent_message") {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-                    if let Some(text) = json.get("item").and_then(|i| i.get("text")).and_then(|t| t.as_str()) {
+                    if let Some(text) = json
+                        .get("item")
+                        .and_then(|i| i.get("text"))
+                        .and_then(|t| t.as_str())
+                    {
                         return text.to_string();
                     }
                 }

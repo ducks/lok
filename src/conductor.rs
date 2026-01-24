@@ -14,15 +14,6 @@ pub struct Conductor {
     config: Config,
 }
 
-#[derive(Serialize)]
-struct ConductorRequest {
-    model: String,
-    max_tokens: u32,
-    system: String,
-    tools: Vec<Tool>,
-    messages: Vec<Message>,
-}
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct Message {
     role: String,
@@ -64,7 +55,6 @@ struct Tool {
 #[derive(Deserialize, Debug)]
 struct ClaudeResponse {
     content: Vec<ResponseBlock>,
-    stop_reason: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -184,11 +174,7 @@ Always explain your reasoning briefly before making tool calls."#,
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("Missing prompt"))?;
 
-                println!(
-                    "  {} Querying {} ...",
-                    "→".cyan(),
-                    backend_name.yellow()
-                );
+                println!("  {} Querying {} ...", "→".cyan(), backend_name.yellow());
 
                 let backend_config = self
                     .config

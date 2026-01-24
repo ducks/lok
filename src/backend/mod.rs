@@ -66,10 +66,7 @@ pub async fn create_bedrock_backend(config: &Config) -> Result<BedrockBackend> {
     BedrockBackend::new(backend_config).await
 }
 
-pub fn get_backends(
-    config: &Config,
-    filter: Option<&str>,
-) -> Result<Vec<Arc<dyn Backend>>> {
+pub fn get_backends(config: &Config, filter: Option<&str>) -> Result<Vec<Arc<dyn Backend>>> {
     let mut backends = Vec::new();
 
     let filter_names: Option<Vec<&str>> = filter.map(|f| f.split(',').collect());
@@ -94,7 +91,12 @@ pub fn get_backends(
                 }
             }
             Err(e) => {
-                eprintln!("{} Failed to create backend {}: {}", "warning:".yellow(), name, e);
+                eprintln!(
+                    "{} Failed to create backend {}: {}",
+                    "warning:".yellow(),
+                    name,
+                    e
+                );
             }
         }
     }
@@ -192,12 +194,7 @@ pub fn list_backends(config: &Config) -> Result<()> {
             _ => "not available".yellow(),
         };
 
-        println!(
-            "  {} - {} ({})",
-            name.bold(),
-            status,
-            available
-        );
+        println!("  {} - {} ({})", name.bold(), status, available);
 
         if let Some(ref cmd) = backend_config.command {
             println!("    command: {} {}", cmd, backend_config.args.join(" "));

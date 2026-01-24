@@ -1,7 +1,7 @@
 use crate::config::BackendConfig;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::env;
 use std::path::Path;
 use std::process::Stdio;
@@ -25,19 +25,6 @@ pub enum ClaudeMode {
 
 pub struct ClaudeBackend {
     mode: ClaudeMode,
-}
-
-#[derive(Serialize)]
-struct ClaudeRequest {
-    model: String,
-    max_tokens: u32,
-    messages: Vec<Message>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct Message {
-    role: String,
-    content: String,
 }
 
 #[derive(Deserialize)]
@@ -91,14 +78,22 @@ impl ClaudeBackend {
     /// Get API mode details (for conductor)
     pub fn api_details(&self) -> Option<(&str, &str, &reqwest::Client)> {
         match &self.mode {
-            ClaudeMode::Api { api_key, model, client } => Some((api_key, model, client)),
+            ClaudeMode::Api {
+                api_key,
+                model,
+                client,
+            } => Some((api_key, model, client)),
             ClaudeMode::Cli { .. } => None,
         }
     }
 
     async fn query_api(&self, system: &str, prompt: &str) -> Result<String> {
         let (api_key, model, client) = match &self.mode {
-            ClaudeMode::Api { api_key, model, client } => (api_key, model, client),
+            ClaudeMode::Api {
+                api_key,
+                model,
+                client,
+            } => (api_key, model, client),
             ClaudeMode::Cli { .. } => anyhow::bail!("API mode required for this operation"),
         };
 
@@ -180,11 +175,7 @@ impl ClaudeBackend {
         Ok(stdout.trim().to_string())
     }
 
-    pub async fn query_with_system(
-        &self,
-        system: &str,
-        prompt: &str,
-    ) -> Result<String> {
+    pub async fn query_with_system(&self, system: &str, prompt: &str) -> Result<String> {
         match &self.mode {
             ClaudeMode::Api { .. } => self.query_api(system, prompt).await,
             ClaudeMode::Cli { .. } => {

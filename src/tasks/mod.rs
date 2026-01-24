@@ -16,8 +16,7 @@ pub async fn run_task(config: &Config, task_name: &str, dir: &Path) -> Result<()
     output::print_task_header(task_name, task.description.as_deref());
 
     // Get backends for this task
-    let backend_filter = if task.backends.is_empty() || task.backends.contains(&"all".to_string())
-    {
+    let backend_filter = if task.backends.is_empty() || task.backends.contains(&"all".to_string()) {
         None
     } else {
         Some(task.backends.join(","))

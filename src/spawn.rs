@@ -122,16 +122,16 @@ Rules:
         }
 
         let response: serde_json::Value = response.json().await?;
-        let text = response["content"][0]["text"]
-            .as_str()
-            .unwrap_or_default();
+        let text = response["content"][0]["text"].as_str().unwrap_or_default();
 
         self.parse_agent_tasks(text)
     }
 
     async fn plan_with_backend(&self, task: &str) -> Result<Vec<AgentTask>> {
         let backends = backend::get_backends(&self.config, None)?;
-        let backend = backends.first().ok_or_else(|| anyhow::anyhow!("No backends available"))?;
+        let backend = backends
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("No backends available"))?;
 
         let prompt = format!(
             r#"Break down this task into 2-4 parallel subtasks. For each, output:
@@ -183,7 +183,11 @@ AGENT: frontend | Build the UI"#,
     }
 
     /// Execute agents in parallel
-    pub async fn execute(&self, tasks: Vec<AgentTask>, shared_context: &str) -> Result<Vec<AgentResult>> {
+    pub async fn execute(
+        &self,
+        tasks: Vec<AgentTask>,
+        shared_context: &str,
+    ) -> Result<Vec<AgentResult>> {
         println!("{}", "=".repeat(50).dimmed());
         println!("{}", "SPAWN: Execution Phase".cyan().bold());
         println!("{}", "=".repeat(50).dimmed());
@@ -295,9 +299,11 @@ AGENT: frontend | Build the UI"#,
 
             // Truncate long outputs for display
             let display_output = if result.output.len() > 500 {
-                format!("{}...\n[truncated, {} chars total]",
+                format!(
+                    "{}...\n[truncated, {} chars total]",
                     &result.output.chars().take(500).collect::<String>(),
-                    result.output.len())
+                    result.output.len()
+                )
             } else {
                 result.output.clone()
             };

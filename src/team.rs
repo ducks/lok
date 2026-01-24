@@ -72,11 +72,7 @@ impl Team {
             .unwrap();
 
         // Query primary
-        println!(
-            "{} Querying {}...",
-            "→".cyan(),
-            primary.name.to_uppercase()
-        );
+        println!("{} Querying {}...", "→".cyan(), primary.name.to_uppercase());
         let primary_result = primary_backend.query(task, &self.cwd).await?;
 
         println!();
@@ -99,7 +95,11 @@ impl Team {
         let mut all_responses = vec![(primary.name.clone(), primary_result.clone())];
 
         for other_profile in recommendations.iter().skip(1).take(1) {
-            if let Some(other_backend) = self.backends.iter().find(|b| b.name() == other_profile.name) {
+            if let Some(other_backend) = self
+                .backends
+                .iter()
+                .find(|b| b.name() == other_profile.name)
+            {
                 let prompt = format!(
                     "Another AI gave this analysis for the task '{}':\n\n{}\n\n\
                     Do you agree? What did they miss or get wrong? Provide your own analysis.",
@@ -125,12 +125,7 @@ impl Team {
                         all_responses.push((other_profile.name.clone(), response));
                     }
                     Err(e) => {
-                        eprintln!(
-                            "{} {} failed: {}",
-                            "!".red(),
-                            other_profile.name,
-                            e
-                        );
+                        eprintln!("{} {} failed: {}", "!".red(), other_profile.name, e);
                     }
                 }
             }
@@ -139,7 +134,9 @@ impl Team {
         // Synthesize results
         let summary = all_responses
             .iter()
-            .map(|(name, response)| format!("**{}**: {}", name.to_uppercase(), truncate(response, 500)))
+            .map(|(name, response)| {
+                format!("**{}**: {}", name.to_uppercase(), truncate(response, 500))
+            })
             .collect::<Vec<_>>()
             .join("\n\n");
 
