@@ -75,7 +75,7 @@ impl super::Backend for CodexBackend {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
 
-        if !output.status.success() && stdout.is_empty() {
+        if !output.status.success() {
             anyhow::bail!("Codex failed: {}", stderr);
         }
 
@@ -83,10 +83,6 @@ impl super::Backend for CodexBackend {
     }
 
     fn is_available(&self) -> bool {
-        std::process::Command::new("which")
-            .arg(&self.command)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        which::which(&self.command).is_ok()
     }
 }
