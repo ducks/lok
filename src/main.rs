@@ -4,6 +4,7 @@ mod config;
 mod debate;
 mod delegation;
 mod output;
+mod spawn;
 mod tasks;
 mod team;
 
@@ -117,6 +118,20 @@ enum Commands {
 
     /// Check which backends are available and ready
     Doctor,
+
+    /// Spawn parallel agents to work on a task
+    Spawn {
+        /// The task to accomplish
+        task: String,
+
+        /// Working directory
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+
+        /// Manually specify agents (format: "name:description")
+        #[arg(short, long)]
+        agent: Option<Vec<String>>,
+    },
 }
 
 #[tokio::main]
@@ -269,6 +284,34 @@ async fn main() -> Result<()> {
                     "!".red()
                 );
             }
+        }
+        Commands::Spawn { task, dir, agent } => {
+            let spawner = spawn::Spawn::new(&config, &dir)?;
+
+            // Parse manual agents if provided
+            let manual_agents = agent.map(|agents| {
+                agents
+                    .iter()
+                    .filter_map(|a| {
+                        let parts: Vec<&str> = a.splitn(2, ':').collect();
+                        if parts.len() == 2 {
+                            Some(spawn::AgentTask {
+                                name: parts[0].trim().to_string(),
+                                description: parts[1].trim().to_string(),
+                                backend: None,
+                            })
+                        } else {
+                            eprintln!("Invalid agent format: {}. Use 'name:description'", a);
+                            None
+                        }
+                    })
+                    .collect()
+            });
+
+            let result = spawner.run(&task, manual_agents).await?;
+            println!("{}", "=".repeat(50).dimmed());
+            println!("{}", "Full output saved.".green());
+            println!("{}", result);
         }
     }
 
