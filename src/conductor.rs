@@ -1,4 +1,4 @@
-use crate::backend::{self, ClaudeBackend};
+use crate::backend;
 use crate::config::Config;
 use anyhow::{Context, Result};
 use colored::Colorize;
@@ -8,7 +8,9 @@ use std::path::Path;
 const MAX_ROUNDS: usize = 5;
 
 pub struct Conductor {
-    claude: ClaudeBackend,
+    api_key: String,
+    model: String,
+    client: reqwest::Client,
     config: Config,
 }
 
@@ -81,8 +83,16 @@ enum ResponseBlock {
 impl Conductor {
     pub fn new(config: &Config) -> Result<Self> {
         let claude = backend::create_claude_backend(config)?;
+        let (api_key, model, client) = claude
+            .api_details()
+            .ok_or_else(|| anyhow::anyhow!(
+                "Conductor requires Claude API mode. Set ANTHROPIC_API_KEY or configure claude backend without 'command' field."
+            ))?;
+
         Ok(Self {
-            claude,
+            api_key: api_key.to_string(),
+            model: model.to_string(),
+            client: client.clone(),
             config: config.clone(),
         })
     }
@@ -224,15 +234,8 @@ Always explain your reasoning briefly before making tool calls."#,
                 "Thinking...".dimmed()
             );
 
-            let model = self
-                .config
-                .backends
-                .get("claude")
-                .and_then(|c| c.model.clone())
-                .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
-
             let request = serde_json::json!({
-                "model": model,
+                "model": &self.model,
                 "max_tokens": 4096,
                 "system": system,
                 "tools": tools,
@@ -240,10 +243,9 @@ Always explain your reasoning briefly before making tool calls."#,
             });
 
             let response = self
-                .claude
                 .client
                 .post("https://api.anthropic.com/v1/messages")
-                .header("x-api-key", &self.claude.api_key)
+                .header("x-api-key", &self.api_key)
                 .header("anthropic-version", "2023-06-01")
                 .header("content-type", "application/json")
                 .json(&request)

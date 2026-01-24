@@ -211,6 +211,7 @@ async fn main() -> Result<()> {
             let checks = vec![
                 ("codex", "codex", "npm install -g @openai/codex"),
                 ("gemini", "npx", "Install Node.js (npx comes with npm)"),
+                ("claude", "claude", "Install Claude Code: https://claude.ai/claude-code"),
             ];
 
             let mut available = 0;
