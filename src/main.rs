@@ -209,20 +209,15 @@ async fn main() -> Result<()> {
             println!();
 
             let checks = vec![
-                ("codex", "which codex", "npm install -g @openai/codex"),
-                ("gemini", "which npx", "Install Node.js (npx comes with npm)"),
+                ("codex", "codex", "npm install -g @openai/codex"),
+                ("gemini", "npx", "Install Node.js (npx comes with npm)"),
             ];
 
             let mut available = 0;
-            for (name, check_cmd, install_hint) in &checks {
-                let status = std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(check_cmd)
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false);
+            for (name, binary, install_hint) in &checks {
+                let found = which::which(binary).is_ok();
 
-                if status {
+                if found {
                     println!("  {} {} - ready", "✓".green(), name);
                     available += 1;
                 } else {
