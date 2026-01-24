@@ -20,8 +20,6 @@ pub struct Defaults {
     pub parallel: bool,
     #[serde(default = "default_timeout")]
     pub timeout: u64,
-    #[serde(default = "default_output_dir")]
-    pub output_dir: String,
 }
 
 fn default_parallel() -> bool {
@@ -32,19 +30,11 @@ fn default_timeout() -> u64 {
     300
 }
 
-fn default_output_dir() -> String {
-    std::env::temp_dir()
-        .join("lok")
-        .to_string_lossy()
-        .to_string()
-}
-
 impl Default for Defaults {
     fn default() -> Self {
         Self {
             parallel: default_parallel(),
             timeout: default_timeout(),
-            output_dir: default_output_dir(),
         }
     }
 }
