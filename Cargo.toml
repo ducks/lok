@@ -2,8 +2,13 @@
 name = "lok"
 version = "0.1.0"
 edition = "2021"
-description = "Multi-LLM orchestration tool for code analysis"
+description = "Local orchestration layer for coordinating multiple LLM backends"
 authors = ["ducks"]
+license = "MIT"
+repository = "https://github.com/ducks/lok"
+readme = "README.md"
+keywords = ["llm", "ai", "orchestration", "codex", "gemini"]
+categories = ["command-line-utilities", "development-tools"]
 
 [features]
 default = []
