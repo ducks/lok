@@ -122,7 +122,30 @@ Rules:
         }
 
         let response: serde_json::Value = response.json().await?;
-        let text = response["content"][0]["text"].as_str().unwrap_or_default();
+
+        // Extract text from response, handling unexpected shapes
+        let text = match response.get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|block| block.get("text"))
+            .and_then(|t| t.as_str())
+        {
+            Some(text) => text,
+            None => {
+                // Response shape unexpected - show what we got for debugging
+                let response_preview = serde_json::to_string_pretty(&response)
+                    .unwrap_or_else(|_| format!("{:?}", response));
+                anyhow::bail!(
+                    "Unexpected response shape from Claude API. Expected content[0].text.\n\
+                    Response preview:\n{}",
+                    if response_preview.len() > 500 {
+                        format!("{}...", &response_preview[..500])
+                    } else {
+                        response_preview
+                    }
+                );
+            }
+        };
 
         self.parse_agent_tasks(text)
     }
@@ -168,7 +191,16 @@ AGENT: frontend | Build the UI"#,
         }
 
         if tasks.is_empty() {
-            anyhow::bail!("Failed to parse agent tasks from plan");
+            let text_preview = if text.len() > 300 {
+                format!("{}...", &text[..300])
+            } else {
+                text.to_string()
+            };
+            anyhow::bail!(
+                "Failed to parse agent tasks from plan. Expected lines starting with 'AGENT: name | description'.\n\
+                Raw response:\n{}",
+                text_preview
+            );
         }
 
         println!();
