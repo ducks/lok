@@ -159,12 +159,16 @@ impl Default for Config {
                 backends: vec!["codex".to_string()],
                 prompts: vec![
                     TaskPrompt {
-                        name: "n+1".to_string(),
-                        prompt: "Search for N+1 query issues in this codebase. Look for queries inside loops, missing includes/preload. List up to 5 specific issues with file:line. Be concise.".to_string(),
+                        name: "errors".to_string(),
+                        prompt: "Find error handling problems in this codebase. Look for: unchecked errors, panics/crashes waiting to happen, missing input validation, swallowed exceptions. List up to 5 specific issues with file:line. Be concise.".to_string(),
+                    },
+                    TaskPrompt {
+                        name: "perf".to_string(),
+                        prompt: "Find performance issues in this codebase. Look for: inefficient loops, unnecessary allocations, blocking calls in async code, O(n^2) patterns, missing caching opportunities. List up to 5 specific issues with file:line. Be concise.".to_string(),
                     },
                     TaskPrompt {
                         name: "dead-code".to_string(),
-                        prompt: "Find unused or dead code in this codebase. List up to 5 specific issues with file:line. Be concise.".to_string(),
+                        prompt: "Find unused or dead code in this codebase. Look for: unreachable code, unused functions/methods, redundant conditions, commented-out code that should be removed. List up to 5 specific issues with file:line. Be concise.".to_string(),
                     },
                 ],
             },
@@ -178,11 +182,15 @@ impl Default for Config {
                 prompts: vec![
                     TaskPrompt {
                         name: "injection".to_string(),
-                        prompt: "Search for SQL injection vulnerabilities. List up to 5 specific issues with file paths. Be concise.".to_string(),
+                        prompt: "Search for injection vulnerabilities (SQL, command, code injection). Look for: unsanitized user input in queries/commands, string interpolation in SQL, shell command construction. List up to 5 specific issues with file:line. Be concise.".to_string(),
                     },
                     TaskPrompt {
                         name: "auth".to_string(),
-                        prompt: "Search for authentication/authorization bypass vulnerabilities. List up to 5 specific issues with file paths. Be concise.".to_string(),
+                        prompt: "Search for authentication/authorization issues. Look for: missing auth checks, privilege escalation, insecure token handling, hardcoded credentials. List up to 5 specific issues with file:line. Be concise.".to_string(),
+                    },
+                    TaskPrompt {
+                        name: "secrets".to_string(),
+                        prompt: "Search for exposed secrets and sensitive data. Look for: hardcoded API keys, passwords in code, secrets in logs, sensitive data in error messages. List up to 5 specific issues with file:line. Be concise.".to_string(),
                     },
                 ],
             },
