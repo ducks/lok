@@ -1,6 +1,6 @@
 [package]
 name = "lokomotiv"
-version = "20260125.0.0"
+version = "20260125.0.1"
 edition = "2021"
 rust-version = "1.75"
 description = "Local orchestration layer for coordinating multiple LLM backends"
