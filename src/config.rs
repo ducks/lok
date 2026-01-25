@@ -141,11 +141,11 @@ impl Default for Config {
             "claude".to_string(),
             BackendConfig {
                 enabled: true,
-                command: None,
+                command: Some("claude".to_string()), // CLI mode by default (Claude Code)
                 args: vec![],
                 skip_lines: 0,
-                api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
-                model: Some("claude-sonnet-4-20250514".to_string()),
+                api_key_env: None,
+                model: None, // Uses Claude Code's default model
                 timeout: None,
             },
         );
@@ -306,9 +306,9 @@ max_tokens = 8192
         let claude = config.backends.get("claude").unwrap();
 
         assert!(claude.enabled);
-        assert!(claude.command.is_none()); // API-based, no command
-        assert!(claude.api_key_env.is_some());
-        assert!(claude.model.is_some());
+        assert_eq!(claude.command, Some("claude".to_string())); // CLI mode by default
+        assert!(claude.api_key_env.is_none()); // No API key needed for CLI
+        assert!(claude.model.is_none()); // Uses Claude Code's default
     }
 
     #[test]

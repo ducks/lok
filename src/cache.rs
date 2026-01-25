@@ -48,6 +48,7 @@ struct CachedResult {
     backend: String,
     output: String,
     success: bool,
+    elapsed_ms: u64,
 }
 
 impl From<&QueryResult> for CachedResult {
@@ -56,6 +57,7 @@ impl From<&QueryResult> for CachedResult {
             backend: r.backend.clone(),
             output: r.output.clone(),
             success: r.success,
+            elapsed_ms: r.elapsed_ms,
         }
     }
 }
@@ -66,6 +68,7 @@ impl From<CachedResult> for QueryResult {
             backend: r.backend,
             output: r.output,
             success: r.success,
+            elapsed_ms: r.elapsed_ms,
         }
     }
 }
@@ -209,6 +212,7 @@ mod tests {
             backend: "test".to_string(),
             output: "output".to_string(),
             success: true,
+            elapsed_ms: 100,
         }];
 
         // Should not error, but also not cache

@@ -16,7 +16,7 @@ use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[async_trait]
 pub trait Backend: Send + Sync {
@@ -29,6 +29,7 @@ pub struct QueryResult {
     pub backend: String,
     pub output: String,
     pub success: bool,
+    pub elapsed_ms: u64,
 }
 
 pub fn create_backend(name: &str, config: &BackendConfig) -> Result<Arc<dyn Backend>> {
@@ -138,11 +139,13 @@ pub async fn run_query_with_options(
     let query_one = |backend: Arc<dyn Backend>, prompt: String, cwd: PathBuf, pb: ProgressBar, timeout: u64| async move {
         pb.set_message(format!("Querying {}...", backend.name()));
 
+        let start = Instant::now();
         let result = tokio::time::timeout(
             Duration::from_secs(timeout),
             backend.query(&prompt, &cwd),
         )
         .await;
+        let elapsed_ms = start.elapsed().as_millis() as u64;
 
         pb.inc(1);
 
@@ -151,16 +154,19 @@ pub async fn run_query_with_options(
                 backend: backend.name().to_string(),
                 output,
                 success: true,
+                elapsed_ms,
             },
             Ok(Err(e)) => QueryResult {
                 backend: backend.name().to_string(),
                 output: format!("Error: {}", e),
                 success: false,
+                elapsed_ms,
             },
             Err(_) => QueryResult {
                 backend: backend.name().to_string(),
                 output: "Error: Timeout".to_string(),
                 success: false,
+                elapsed_ms,
             },
         }
     };
@@ -221,11 +227,13 @@ pub async fn run_query_with_config(
     let query_one = |backend: Arc<dyn Backend>, prompt: String, cwd: PathBuf, pb: ProgressBar, timeout: u64| async move {
         pb.set_message(format!("Querying {}...", backend.name()));
 
+        let start = Instant::now();
         let result = tokio::time::timeout(
             Duration::from_secs(timeout),
             backend.query(&prompt, &cwd),
         )
         .await;
+        let elapsed_ms = start.elapsed().as_millis() as u64;
 
         pb.inc(1);
 
@@ -234,16 +242,19 @@ pub async fn run_query_with_config(
                 backend: backend.name().to_string(),
                 output,
                 success: true,
+                elapsed_ms,
             },
             Ok(Err(e)) => QueryResult {
                 backend: backend.name().to_string(),
                 output: format!("Error: {}", e),
                 success: false,
+                elapsed_ms,
             },
             Err(_) => QueryResult {
                 backend: backend.name().to_string(),
                 output: format!("Error: Timeout ({}s)", timeout),
                 success: false,
+                elapsed_ms,
             },
         }
     };
@@ -292,6 +303,61 @@ pub async fn run_query_with_config(
     pb.finish_and_clear();
 
     Ok(results)
+}
+
+/// Print verbose debug info before running a query
+pub fn print_verbose_header(prompt: &str, backends: &[Arc<dyn Backend>], cwd: &Path) {
+    println!("{}", "=== VERBOSE MODE ===".cyan().bold());
+    println!();
+    println!("{} {}", "Working directory:".dimmed(), cwd.display());
+    println!(
+        "{} {}",
+        "Backends:".dimmed(),
+        backends
+            .iter()
+            .map(|b| b.name())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    println!();
+    println!("{}", "Prompt:".dimmed());
+    println!("{}", "-".repeat(50).dimmed());
+    println!("{}", prompt);
+    println!("{}", "-".repeat(50).dimmed());
+    println!();
+}
+
+/// Print verbose timing info after results
+pub fn print_verbose_timing(results: &[QueryResult]) {
+    println!();
+    println!("{}", "=== TIMING ===".cyan().bold());
+    for result in results {
+        let status = if result.success {
+            "OK".green()
+        } else {
+            "FAIL".red()
+        };
+        let time = format_duration(result.elapsed_ms);
+        let chars = result.output.len();
+        println!(
+            "  {} {} ({}, {} chars)",
+            result.backend.bold(),
+            status,
+            time,
+            chars
+        );
+    }
+    println!();
+}
+
+fn format_duration(ms: u64) -> String {
+    if ms < 1000 {
+        format!("{}ms", ms)
+    } else if ms < 60000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else {
+        format!("{:.1}m", ms as f64 / 60000.0)
+    }
 }
 
 pub fn list_backends(config: &Config) -> Result<()> {
