@@ -5,8 +5,6 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-const MAX_ROUNDS: usize = 5;
-
 pub struct Conductor {
     api_key: String,
     model: String,
@@ -213,7 +211,8 @@ Always explain your reasoning briefly before making tool calls."#,
             content: MessageContent::Text(task.to_string()),
         }];
 
-        for round in 0..MAX_ROUNDS {
+        let max_rounds = self.config.conductor.max_rounds;
+        for round in 0..max_rounds {
             println!(
                 "{} {}",
                 format!("[Round {}]", round + 1).dimmed(),
@@ -222,7 +221,7 @@ Always explain your reasoning briefly before making tool calls."#,
 
             let request = serde_json::json!({
                 "model": &self.model,
-                "max_tokens": 4096,
+                "max_tokens": self.config.conductor.max_tokens,
                 "system": system,
                 "tools": tools,
                 "messages": messages
