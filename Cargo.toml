@@ -2,10 +2,13 @@
 name = "lok"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.75"
 description = "Local orchestration layer for coordinating multiple LLM backends"
 authors = ["ducks"]
 license = "MIT"
 repository = "https://github.com/ducks/lok"
+homepage = "https://github.com/ducks/lok"
+documentation = "https://docs.rs/lok"
 readme = "README.md"
 keywords = ["llm", "ai", "orchestration", "codex", "gemini"]
 categories = ["command-line-utilities", "development-tools"]
@@ -38,3 +41,7 @@ reqwest = { version = "0.12", features = ["json"] }
 which = "7"
 aws-config = { version = "1", optional = true }
 aws-sdk-bedrockruntime = { version = "1", optional = true }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
