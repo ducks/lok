@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use colored::Colorize;
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -112,15 +112,19 @@ pub async fn run_query(
     backends: &[Arc<dyn Backend>],
     prompt: &str,
     cwd: &Path,
+    config: &Config,
 ) -> Result<Vec<QueryResult>> {
-    run_query_with_timeout(backends, prompt, cwd, 300).await
+    let timeout = config.defaults.timeout;
+    let parallel = config.defaults.parallel;
+    run_query_with_options(backends, prompt, cwd, timeout, parallel).await
 }
 
-pub async fn run_query_with_timeout(
+pub async fn run_query_with_options(
     backends: &[Arc<dyn Backend>],
     prompt: &str,
     cwd: &Path,
     timeout_secs: u64,
+    parallel: bool,
 ) -> Result<Vec<QueryResult>> {
     let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
 
@@ -132,47 +136,64 @@ pub async fn run_query_with_timeout(
             .progress_chars("#>-"),
     );
 
-    let futures: Vec<_> = backends
-        .iter()
-        .map(|backend| {
-            let backend = Arc::clone(backend);
-            let prompt = prompt.to_string();
-            let cwd = cwd.clone();
-            let pb = pb.clone();
+    let query_one = |backend: Arc<dyn Backend>, prompt: String, cwd: PathBuf, pb: ProgressBar| async move {
+        pb.set_message(format!("Querying {}...", backend.name()));
 
-            async move {
-                pb.set_message(format!("Querying {}...", backend.name()));
+        let result = tokio::time::timeout(
+            Duration::from_secs(timeout_secs),
+            backend.query(&prompt, &cwd),
+        )
+        .await;
 
-                let result = tokio::time::timeout(
-                    Duration::from_secs(timeout_secs),
-                    backend.query(&prompt, &cwd),
+        pb.inc(1);
+
+        match result {
+            Ok(Ok(output)) => QueryResult {
+                backend: backend.name().to_string(),
+                output,
+                success: true,
+            },
+            Ok(Err(e)) => QueryResult {
+                backend: backend.name().to_string(),
+                output: format!("Error: {}", e),
+                success: false,
+            },
+            Err(_) => QueryResult {
+                backend: backend.name().to_string(),
+                output: "Error: Timeout".to_string(),
+                success: false,
+            },
+        }
+    };
+
+    let results = if parallel {
+        let futures: Vec<_> = backends
+            .iter()
+            .map(|backend| {
+                query_one(
+                    Arc::clone(backend),
+                    prompt.to_string(),
+                    cwd.clone(),
+                    pb.clone(),
                 )
-                .await;
+            })
+            .collect();
+        join_all(futures).await
+    } else {
+        let mut results = Vec::new();
+        for backend in backends {
+            let result = query_one(
+                Arc::clone(backend),
+                prompt.to_string(),
+                cwd.clone(),
+                pb.clone(),
+            )
+            .await;
+            results.push(result);
+        }
+        results
+    };
 
-                pb.inc(1);
-
-                match result {
-                    Ok(Ok(output)) => QueryResult {
-                        backend: backend.name().to_string(),
-                        output,
-                        success: true,
-                    },
-                    Ok(Err(e)) => QueryResult {
-                        backend: backend.name().to_string(),
-                        output: format!("Error: {}", e),
-                        success: false,
-                    },
-                    Err(_) => QueryResult {
-                        backend: backend.name().to_string(),
-                        output: "Error: Timeout".to_string(),
-                        success: false,
-                    },
-                }
-            }
-        })
-        .collect();
-
-    let results = join_all(futures).await;
     pb.finish_and_clear();
 
     Ok(results)

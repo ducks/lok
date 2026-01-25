@@ -146,7 +146,7 @@ async fn main() -> Result<()> {
             dir,
         } => {
             let backends = backend::get_backends(&config, backend.as_deref())?;
-            let results = backend::run_query(&backends, &prompt, &dir).await?;
+            let results = backend::run_query(&backends, &prompt, &dir, &config).await?;
             output::print_results(&results);
         }
         Commands::Hunt { dir } => {
@@ -175,7 +175,7 @@ async fn main() -> Result<()> {
             backend,
         } => {
             let backends = backend::get_backends(&config, backend.as_deref())?;
-            let debate = debate::Debate::new(backends, &topic, &dir);
+            let debate = debate::Debate::new(backends, &topic, &dir, &config);
             let result = debate.run().await?;
             println!();
             println!("{}", result);
@@ -207,7 +207,7 @@ async fn main() -> Result<()> {
                     println!();
 
                     let backends = backend::get_backends(&config, Some(backend_name))?;
-                    let results = backend::run_query(&backends, &prompt, &dir).await?;
+                    let results = backend::run_query(&backends, &prompt, &dir, &config).await?;
                     output::print_results(&results);
                 }
                 None => {
@@ -216,7 +216,7 @@ async fn main() -> Result<()> {
                         "smart:".yellow()
                     );
                     let backends = backend::get_backends(&config, None)?;
-                    let results = backend::run_query(&backends, &prompt, &dir).await?;
+                    let results = backend::run_query(&backends, &prompt, &dir, &config).await?;
                     output::print_results(&results);
                 }
             }

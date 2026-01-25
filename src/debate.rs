@@ -1,4 +1,5 @@
 use crate::backend::{self, Backend};
+use crate::config::Config;
 use anyhow::Result;
 use colored::Colorize;
 use std::path::Path;
@@ -6,10 +7,11 @@ use std::sync::Arc;
 
 const MAX_ROUNDS: usize = 3;
 
-pub struct Debate {
+pub struct Debate<'a> {
     backends: Vec<Arc<dyn Backend>>,
     topic: String,
     cwd: std::path::PathBuf,
+    config: &'a Config,
 }
 
 struct Position {
@@ -17,12 +19,13 @@ struct Position {
     stance: String,
 }
 
-impl Debate {
-    pub fn new(backends: Vec<Arc<dyn Backend>>, topic: &str, cwd: &Path) -> Self {
+impl<'a> Debate<'a> {
+    pub fn new(backends: Vec<Arc<dyn Backend>>, topic: &str, cwd: &Path, config: &'a Config) -> Self {
         Self {
             backends,
             topic: topic.to_string(),
             cwd: cwd.to_path_buf(),
+            config,
         }
     }
 
@@ -81,7 +84,7 @@ impl Debate {
             self.topic
         );
 
-        let results = backend::run_query(&self.backends, &prompt, &self.cwd).await?;
+        let results = backend::run_query(&self.backends, &prompt, &self.cwd, self.config).await?;
 
         Ok(results
             .into_iter()

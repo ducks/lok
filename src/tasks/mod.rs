@@ -28,7 +28,7 @@ pub async fn run_task(config: &Config, task_name: &str, dir: &Path) -> Result<()
     for prompt_config in &task.prompts {
         output::print_prompt_header(&prompt_config.name);
 
-        let results = backend::run_query(&backends, &prompt_config.prompt, dir).await?;
+        let results = backend::run_query(&backends, &prompt_config.prompt, dir, config).await?;
         output::print_results(&results);
     }
 
