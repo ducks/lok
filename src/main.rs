@@ -24,6 +24,10 @@ struct Cli {
     /// Path to config file
     #[arg(short, long, global = true)]
     config: Option<PathBuf>,
+
+    /// Verbose output (show prompts, timing, debug info)
+    #[arg(short, long, global = true)]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
@@ -146,8 +150,17 @@ async fn main() -> Result<()> {
             dir,
         } => {
             let backends = backend::get_backends(&config, backend.as_deref())?;
+
+            if cli.verbose {
+                backend::print_verbose_header(&prompt, &backends, &dir);
+            }
+
             let results = backend::run_query(&backends, &prompt, &dir, &config).await?;
             output::print_results(&results);
+
+            if cli.verbose {
+                backend::print_verbose_timing(&results);
+            }
         }
         Commands::Hunt { dir } => {
             tasks::hunt::run(&config, &dir).await?;
@@ -207,8 +220,17 @@ async fn main() -> Result<()> {
                     println!();
 
                     let backends = backend::get_backends(&config, Some(backend_name))?;
+
+                    if cli.verbose {
+                        backend::print_verbose_header(&prompt, &backends, &dir);
+                    }
+
                     let results = backend::run_query(&backends, &prompt, &dir, &config).await?;
                     output::print_results(&results);
+
+                    if cli.verbose {
+                        backend::print_verbose_timing(&results);
+                    }
                 }
                 None => {
                     println!(
@@ -216,8 +238,17 @@ async fn main() -> Result<()> {
                         "smart:".yellow()
                     );
                     let backends = backend::get_backends(&config, None)?;
+
+                    if cli.verbose {
+                        backend::print_verbose_header(&prompt, &backends, &dir);
+                    }
+
                     let results = backend::run_query(&backends, &prompt, &dir, &config).await?;
                     output::print_results(&results);
+
+                    if cli.verbose {
+                        backend::print_verbose_timing(&results);
+                    }
                 }
             }
         }
