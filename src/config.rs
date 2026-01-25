@@ -9,6 +9,8 @@ pub struct Config {
     #[serde(default)]
     pub defaults: Defaults,
     #[serde(default)]
+    pub conductor: ConductorConfig,
+    #[serde(default)]
     pub backends: HashMap<String, BackendConfig>,
     #[serde(default)]
     pub tasks: HashMap<String, TaskConfig>,
@@ -35,6 +37,31 @@ impl Default for Defaults {
         Self {
             parallel: default_parallel(),
             timeout: default_timeout(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ConductorConfig {
+    #[serde(default = "default_max_rounds")]
+    pub max_rounds: usize,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: usize,
+}
+
+fn default_max_rounds() -> usize {
+    5
+}
+
+fn default_max_tokens() -> usize {
+    4096
+}
+
+impl Default for ConductorConfig {
+    fn default() -> Self {
+        Self {
+            max_rounds: default_max_rounds(),
+            max_tokens: default_max_tokens(),
         }
     }
 }
@@ -156,6 +183,7 @@ impl Default for Config {
 
         Self {
             defaults: Defaults::default(),
+            conductor: ConductorConfig::default(),
             backends,
             tasks,
         }
@@ -221,6 +249,27 @@ mod tests {
         assert!(config.backends.contains_key("codex"));
         assert!(config.tasks.contains_key("hunt"));
         assert!(config.tasks.contains_key("audit"));
+    }
+
+    #[test]
+    fn test_conductor_defaults() {
+        let config = Config::default();
+
+        assert_eq!(config.conductor.max_rounds, 5);
+        assert_eq!(config.conductor.max_tokens, 4096);
+    }
+
+    #[test]
+    fn test_conductor_custom_config() {
+        let toml_str = r#"
+[conductor]
+max_rounds = 10
+max_tokens = 8192
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(config.conductor.max_rounds, 10);
+        assert_eq!(config.conductor.max_tokens, 8192);
     }
 
     #[test]
