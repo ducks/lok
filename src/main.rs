@@ -160,7 +160,8 @@ async fn main() -> Result<()> {
                 backend::print_verbose_header(&prompt, &backends, &dir);
             }
 
-            let backend_names: Vec<String> = backends.iter().map(|b| b.name().to_string()).collect();
+            let backend_names: Vec<String> =
+                backends.iter().map(|b| b.name().to_string()).collect();
             let cwd = dir.canonicalize().unwrap_or_else(|_| dir.clone());
             let cwd_str = cwd.to_string_lossy().to_string();
 
