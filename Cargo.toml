@@ -1,5 +1,5 @@
 [package]
-name = "lok"
+name = "lok-cli"
 version = "20260124.0.1"
 edition = "2021"
 rust-version = "1.75"
@@ -8,7 +8,8 @@ authors = ["ducks"]
 license = "MIT"
 repository = "https://github.com/ducks/lok"
 homepage = "https://github.com/ducks/lok"
-documentation = "https://docs.rs/lok"
+documentation = "https://docs.rs/lok-cli"
+
 readme = "README.md"
 keywords = ["llm", "ai", "orchestration", "codex", "gemini"]
 categories = ["command-line-utilities", "development-tools"]
@@ -20,6 +21,10 @@ exclude = [
     "tmp/",
     "target/",
 ]
+
+[[bin]]
+name = "lok"
+path = "src/main.rs"
 
 [features]
 default = []
