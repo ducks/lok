@@ -1,4 +1,5 @@
 mod backend;
+mod cache;
 mod conductor;
 mod config;
 mod debate;
@@ -40,6 +41,10 @@ enum Commands {
         /// Working directory for the query
         #[arg(short, long, default_value = ".")]
         dir: PathBuf,
+
+        /// Skip cache and force fresh query
+        #[arg(long)]
+        no_cache: bool,
     },
 
     /// Run a bug hunt on a codebase
@@ -144,9 +149,32 @@ async fn main() -> Result<()> {
             prompt,
             backend,
             dir,
+            no_cache,
         } => {
             let backends = backend::get_backends(&config, backend.as_deref())?;
+            let backend_names: Vec<String> = backends.iter().map(|b| b.name().to_string()).collect();
+            let cwd = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+            let cwd_str = cwd.to_string_lossy().to_string();
+
+            // Check cache first (unless --no-cache)
+            let cache = cache::Cache::new(&config.cache);
+            let cache_key = cache.cache_key(&prompt, &backend_names, &cwd_str);
+
+            if !no_cache {
+                if let Some(cached_results) = cache.get(&cache_key) {
+                    println!("{}", "(cached)".dimmed());
+                    output::print_results(&cached_results);
+                    return Ok(());
+                }
+            }
+
             let results = backend::run_query(&backends, &prompt, &dir, &config).await?;
+
+            // Cache the results
+            if !no_cache {
+                let _ = cache.set(&cache_key, &results);
+            }
+
             output::print_results(&results);
         }
         Commands::Hunt { dir } => {

@@ -114,9 +114,7 @@ pub async fn run_query(
     cwd: &Path,
     config: &Config,
 ) -> Result<Vec<QueryResult>> {
-    let timeout = config.defaults.timeout;
-    let parallel = config.defaults.parallel;
-    run_query_with_options(backends, prompt, cwd, timeout, parallel).await
+    run_query_with_config(backends, prompt, cwd, config).await
 }
 
 pub async fn run_query_with_options(
@@ -126,6 +124,7 @@ pub async fn run_query_with_options(
     timeout_secs: u64,
     parallel: bool,
 ) -> Result<Vec<QueryResult>> {
+    // Legacy function for backwards compatibility - uses single timeout for all
     let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
 
     let pb = ProgressBar::new(backends.len() as u64);
@@ -136,11 +135,11 @@ pub async fn run_query_with_options(
             .progress_chars("#>-"),
     );
 
-    let query_one = |backend: Arc<dyn Backend>, prompt: String, cwd: PathBuf, pb: ProgressBar| async move {
+    let query_one = |backend: Arc<dyn Backend>, prompt: String, cwd: PathBuf, pb: ProgressBar, timeout: u64| async move {
         pb.set_message(format!("Querying {}...", backend.name()));
 
         let result = tokio::time::timeout(
-            Duration::from_secs(timeout_secs),
+            Duration::from_secs(timeout),
             backend.query(&prompt, &cwd),
         )
         .await;
@@ -175,6 +174,7 @@ pub async fn run_query_with_options(
                     prompt.to_string(),
                     cwd.clone(),
                     pb.clone(),
+                    timeout_secs,
                 )
             })
             .collect();
@@ -187,6 +187,101 @@ pub async fn run_query_with_options(
                 prompt.to_string(),
                 cwd.clone(),
                 pb.clone(),
+                timeout_secs,
+            )
+            .await;
+            results.push(result);
+        }
+        results
+    };
+
+    pb.finish_and_clear();
+
+    Ok(results)
+}
+
+pub async fn run_query_with_config(
+    backends: &[Arc<dyn Backend>],
+    prompt: &str,
+    cwd: &Path,
+    config: &Config,
+) -> Result<Vec<QueryResult>> {
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let default_timeout = config.defaults.timeout;
+    let parallel = config.defaults.parallel;
+
+    let pb = ProgressBar::new(backends.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+            .unwrap()
+            .progress_chars("#>-"),
+    );
+
+    let query_one = |backend: Arc<dyn Backend>, prompt: String, cwd: PathBuf, pb: ProgressBar, timeout: u64| async move {
+        pb.set_message(format!("Querying {}...", backend.name()));
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(timeout),
+            backend.query(&prompt, &cwd),
+        )
+        .await;
+
+        pb.inc(1);
+
+        match result {
+            Ok(Ok(output)) => QueryResult {
+                backend: backend.name().to_string(),
+                output,
+                success: true,
+            },
+            Ok(Err(e)) => QueryResult {
+                backend: backend.name().to_string(),
+                output: format!("Error: {}", e),
+                success: false,
+            },
+            Err(_) => QueryResult {
+                backend: backend.name().to_string(),
+                output: format!("Error: Timeout ({}s)", timeout),
+                success: false,
+            },
+        }
+    };
+
+    // Helper to get timeout for a backend
+    let get_timeout = |backend_name: &str| -> u64 {
+        config
+            .backends
+            .get(backend_name)
+            .and_then(|b| b.timeout)
+            .unwrap_or(default_timeout)
+    };
+
+    let results = if parallel {
+        let futures: Vec<_> = backends
+            .iter()
+            .map(|backend| {
+                let timeout = get_timeout(backend.name());
+                query_one(
+                    Arc::clone(backend),
+                    prompt.to_string(),
+                    cwd.clone(),
+                    pb.clone(),
+                    timeout,
+                )
+            })
+            .collect();
+        join_all(futures).await
+    } else {
+        let mut results = Vec::new();
+        for backend in backends {
+            let timeout = get_timeout(backend.name());
+            let result = query_one(
+                Arc::clone(backend),
+                prompt.to_string(),
+                cwd.clone(),
+                pb.clone(),
+                timeout,
             )
             .await;
             results.push(result);
