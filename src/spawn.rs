@@ -124,7 +124,8 @@ Rules:
         let response: serde_json::Value = response.json().await?;
 
         // Extract text from response, handling unexpected shapes
-        let text = match response.get("content")
+        let text = match response
+            .get("content")
             .and_then(|c| c.as_array())
             .and_then(|arr| arr.first())
             .and_then(|block| block.get("text"))

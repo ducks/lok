@@ -20,7 +20,12 @@ struct Position {
 }
 
 impl<'a> Debate<'a> {
-    pub fn new(backends: Vec<Arc<dyn Backend>>, topic: &str, cwd: &Path, config: &'a Config) -> Self {
+    pub fn new(
+        backends: Vec<Arc<dyn Backend>>,
+        topic: &str,
+        cwd: &Path,
+        config: &'a Config,
+    ) -> Self {
         Self {
             backends,
             topic: topic.to_string(),
