@@ -1,28 +1,31 @@
 { pkgs ? import <nixpkgs> {} }:
 
+let
+  # Use fenix for latest stable Rust
+  fenix = import (fetchTarball "https://github.com/nix-community/fenix/archive/main.tar.gz") { inherit pkgs; };
+  rustToolchain = fenix.stable.toolchain;
+in
 pkgs.mkShell {
   name = "lok-dev";
 
-  buildInputs = with pkgs; [
-    rustc
-    cargo
-    rust-analyzer
-    clippy
-    rustfmt
+  buildInputs = [
+    rustToolchain
 
     # For reqwest/openssl
-    openssl
-    pkg-config
+    pkgs.openssl
+    pkgs.pkg-config
 
     # For LLM CLI backends
-    nodejs_22
-    nodePackages.npm
+    pkgs.nodejs_22
+    pkgs.nodePackages.npm
+    pkgs.ollama
   ];
 
   shellHook = ''
     export RUST_BACKTRACE=1
     export NPM_CONFIG_PREFIX=$HOME/.npm-global
     export PATH=$HOME/.local/bin:$NPM_CONFIG_PREFIX/bin:$PATH
+    export LD_LIBRARY_PATH=${pkgs.openssl.out}/lib:$LD_LIBRARY_PATH
 
     echo ""
     echo "Lok Development Environment"

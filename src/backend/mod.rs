@@ -3,6 +3,7 @@ mod bedrock;
 mod claude;
 mod codex;
 mod gemini;
+mod ollama;
 
 #[cfg(feature = "bedrock")]
 pub use bedrock::BedrockBackend;
@@ -37,6 +38,7 @@ pub fn create_backend(name: &str, config: &BackendConfig) -> Result<Arc<dyn Back
         "codex" => Ok(Arc::new(codex::CodexBackend::new(config)?)),
         "gemini" => Ok(Arc::new(gemini::GeminiBackend::new(config)?)),
         "claude" => Ok(Arc::new(claude::ClaudeBackend::new(config)?)),
+        "ollama" => Ok(Arc::new(ollama::OllamaBackend::new(config)?)),
         #[cfg(feature = "bedrock")]
         "bedrock" => {
             // BedrockBackend::new is async, need runtime

@@ -28,6 +28,10 @@ npm install -g @openai/codex
 
 # Google Gemini
 # (uses npx, no install needed, but needs GOOGLE_API_KEY)
+
+# Ollama (local LLMs)
+# Install from https://ollama.ai then:
+ollama pull llama3.2
 ```
 
 ## Installation
@@ -183,6 +187,7 @@ Lok wraps existing LLM CLIs as pluggable backends:
 
 | Backend | CLI | Strengths |
 |---------|-----|-----------|
+| ollama | HTTP API | Local LLMs, private, no API costs |
 | codex | `codex` | Efficient, direct answers, good for patterns |
 | gemini | `npx @google/gemini-cli` | Thorough, investigative, goes deep |
 | claude | `claude` or API | Balanced, good for orchestration |
@@ -230,6 +235,23 @@ enabled = true
 api_key_env = "ANTHROPIC_API_KEY"
 model = "claude-sonnet-4-20250514"
 # Note: no 'command' field = API mode
+```
+
+## Ollama Backend
+
+Ollama runs local LLMs via HTTP API. No CLI binary needed, just the Ollama
+server running.
+
+```toml
+[backends.ollama]
+enabled = true
+command = "http://localhost:11434"  # Base URL
+model = "llama3.2"                   # Default model
+```
+
+```bash
+# Start Ollama server, then:
+lok ask --backend ollama "Explain this function"
 ```
 
 ## Conductor Mode

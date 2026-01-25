@@ -150,6 +150,19 @@ impl Default for Config {
             },
         );
 
+        backends.insert(
+            "ollama".to_string(),
+            BackendConfig {
+                enabled: true,
+                command: Some("http://localhost:11434".to_string()), // Base URL
+                args: vec![],
+                skip_lines: 0,
+                api_key_env: None,
+                model: Some("llama3.2".to_string()), // Default model
+                timeout: None,
+            },
+        );
+
         let mut tasks = HashMap::new();
 
         tasks.insert(
