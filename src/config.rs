@@ -11,6 +11,8 @@ pub struct Config {
     #[serde(default)]
     pub conductor: ConductorConfig,
     #[serde(default)]
+    pub cache: crate::cache::CacheConfig,
+    #[serde(default)]
     pub backends: HashMap<String, BackendConfig>,
     #[serde(default)]
     pub tasks: HashMap<String, TaskConfig>,
@@ -77,6 +79,8 @@ pub struct BackendConfig {
     pub skip_lines: usize,
     pub api_key_env: Option<String>,
     pub model: Option<String>,
+    /// Per-backend timeout in seconds (overrides defaults.timeout)
+    pub timeout: Option<u64>,
 }
 
 fn default_enabled() -> bool {
@@ -116,6 +120,7 @@ impl Default for Config {
                 skip_lines: 0,
                 api_key_env: None,
                 model: None,
+                timeout: None,
             },
         );
 
@@ -128,6 +133,7 @@ impl Default for Config {
                 skip_lines: 1,
                 api_key_env: None,
                 model: None,
+                timeout: Some(600), // Gemini goes agentic, needs more time
             },
         );
 
@@ -140,6 +146,7 @@ impl Default for Config {
                 skip_lines: 0,
                 api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
                 model: Some("claude-sonnet-4-20250514".to_string()),
+                timeout: None,
             },
         );
 
@@ -184,6 +191,7 @@ impl Default for Config {
         Self {
             defaults: Defaults::default(),
             conductor: ConductorConfig::default(),
+            cache: crate::cache::CacheConfig::default(),
             backends,
             tasks,
         }
