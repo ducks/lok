@@ -1,7 +1,7 @@
 { pkgs ? import <nixpkgs> {} }:
 
 pkgs.mkShell {
-  name = "council-dev";
+  name = "lok-dev";
 
   buildInputs = with pkgs; [
     rustc
@@ -22,11 +22,11 @@ pkgs.mkShell {
   shellHook = ''
     export RUST_BACKTRACE=1
     export NPM_CONFIG_PREFIX=$HOME/.npm-global
-    export PATH=$NPM_CONFIG_PREFIX/bin:$PATH
+    export PATH=$HOME/.local/bin:$NPM_CONFIG_PREFIX/bin:$PATH
 
     echo ""
-    echo "Council Development Environment"
-    echo "================================"
+    echo "Lok Development Environment"
+    echo "==========================="
     echo "Rust: $(rustc --version)"
     echo "Cargo: $(cargo --version)"
     echo ""
