@@ -138,15 +138,16 @@ pub async fn run_query_with_config(
             .progress_chars("#>-"),
     );
 
-    let query_one = |backend: Arc<dyn Backend>, prompt: String, cwd: PathBuf, pb: ProgressBar, timeout: u64| async move {
+    let query_one = |backend: Arc<dyn Backend>,
+                     prompt: String,
+                     cwd: PathBuf,
+                     pb: ProgressBar,
+                     timeout: u64| async move {
         pb.set_message(format!("Querying {}...", backend.name()));
 
         let start = Instant::now();
-        let result = tokio::time::timeout(
-            Duration::from_secs(timeout),
-            backend.query(&prompt, &cwd),
-        )
-        .await;
+        let result =
+            tokio::time::timeout(Duration::from_secs(timeout), backend.query(&prompt, &cwd)).await;
         let elapsed_ms = start.elapsed().as_millis() as u64;
 
         pb.inc(1);
