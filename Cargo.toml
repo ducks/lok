@@ -1,5 +1,5 @@
 [package]
-name = "lok-cli"
+name = "lokomotiv"
 version = "20260124.0.2"
 edition = "2021"
 rust-version = "1.75"
@@ -8,7 +8,7 @@ authors = ["ducks"]
 license = "MIT"
 repository = "https://github.com/ducks/lok"
 homepage = "https://github.com/ducks/lok"
-documentation = "https://docs.rs/lok-cli"
+documentation = "https://docs.rs/lokomotiv"
 
 readme = "README.md"
 keywords = ["llm", "ai", "orchestration", "codex", "gemini"]
@@ -24,6 +24,10 @@ exclude = [
 
 [[bin]]
 name = "lok"
+path = "src/main.rs"
+
+[[bin]]
+name = "lokomotiv"
 path = "src/main.rs"
 
 [features]
