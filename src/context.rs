@@ -247,7 +247,6 @@ impl CodebaseContext {
             Some(format!("CODEBASE CONTEXT:\n{}\n\n", notes.join("\n")))
         }
     }
-
 }
 
 #[cfg(test)]
