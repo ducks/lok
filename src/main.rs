@@ -2,6 +2,7 @@ mod backend;
 mod cache;
 mod conductor;
 mod config;
+mod context;
 mod debate;
 mod delegation;
 mod output;
@@ -154,6 +155,13 @@ enum Commands {
 
         /// Working directory
         #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+
+    /// Show detected codebase context
+    Context {
+        /// Directory to analyze
+        #[arg(default_value = ".")]
         dir: PathBuf,
     },
 }
@@ -435,9 +443,122 @@ async fn main() -> Result<()> {
             // Shorthand for 'workflow run'
             run_workflow(&name, &dir, &config).await?;
         }
+        Commands::Context { dir } => {
+            show_context(&dir);
+        }
     }
 
     Ok(())
+}
+
+fn show_context(dir: &Path) {
+    use colored::Colorize;
+
+    let ctx = context::CodebaseContext::detect(dir);
+
+    println!("{}", "Detected Codebase Context".bold());
+    println!("{}", "=".repeat(40));
+
+    if let Some(lang) = &ctx.detected_language {
+        println!("Language: {}", lang.cyan());
+    }
+
+    // Ruby/Rails
+    if ctx.is_rails || ctx.has_goldiloader || ctx.has_bullet || ctx.has_brakeman
+        || ctx.has_rubocop || ctx.has_strong_migrations || ctx.has_rspec
+        || ctx.has_sidekiq || ctx.has_sorbet
+    {
+        println!();
+        println!("{}", "Ruby/Rails:".bold());
+        if ctx.is_rails { println!("  {} Rails", "+".green()); }
+        if ctx.has_goldiloader { println!("  {} Goldiloader (auto N+1 prevention)", "+".green()); }
+        if ctx.has_bullet { println!("  {} Bullet (N+1 detection)", "+".green()); }
+        if ctx.has_brakeman { println!("  {} Brakeman (security)", "+".green()); }
+        if ctx.has_rubocop { println!("  {} RuboCop (linting)", "+".green()); }
+        if ctx.has_strong_migrations { println!("  {} StrongMigrations (safe migrations)", "+".green()); }
+        if ctx.has_rspec { println!("  {} RSpec (testing)", "+".green()); }
+        if ctx.has_sidekiq { println!("  {} Sidekiq (background jobs)", "+".green()); }
+        if ctx.has_sorbet { println!("  {} Sorbet (type checking)", "+".green()); }
+    }
+
+    // JavaScript/TypeScript
+    if ctx.has_typescript || ctx.has_eslint || ctx.has_prettier || ctx.has_jest
+        || ctx.has_vitest || ctx.has_react || ctx.has_vue || ctx.has_nextjs || ctx.has_tailwind
+    {
+        println!();
+        println!("{}", "JavaScript/TypeScript:".bold());
+        if ctx.has_typescript { println!("  {} TypeScript", "+".green()); }
+        if ctx.has_react { println!("  {} React", "+".green()); }
+        if ctx.has_vue { println!("  {} Vue", "+".green()); }
+        if ctx.has_nextjs { println!("  {} Next.js", "+".green()); }
+        if ctx.has_eslint { println!("  {} ESLint (linting)", "+".green()); }
+        if ctx.has_prettier { println!("  {} Prettier (formatting)", "+".green()); }
+        if ctx.has_jest { println!("  {} Jest (testing)", "+".green()); }
+        if ctx.has_vitest { println!("  {} Vitest (testing)", "+".green()); }
+        if ctx.has_tailwind { println!("  {} Tailwind CSS", "+".green()); }
+    }
+
+    // Python
+    if ctx.is_python || ctx.is_django || ctx.is_fastapi || ctx.has_sqlalchemy
+        || ctx.has_pytest || ctx.has_mypy || ctx.has_ruff || ctx.has_alembic
+    {
+        println!();
+        println!("{}", "Python:".bold());
+        if ctx.is_django { println!("  {} Django", "+".green()); }
+        if ctx.is_fastapi { println!("  {} FastAPI", "+".green()); }
+        if ctx.has_sqlalchemy { println!("  {} SQLAlchemy", "+".green()); }
+        if ctx.has_alembic { println!("  {} Alembic (migrations)", "+".green()); }
+        if ctx.has_pytest { println!("  {} pytest (testing)", "+".green()); }
+        if ctx.has_mypy { println!("  {} mypy (type checking)", "+".green()); }
+        if ctx.has_ruff { println!("  {} Ruff (linting)", "+".green()); }
+    }
+
+    // Rust
+    if ctx.is_rust || ctx.has_tokio || ctx.has_diesel || ctx.has_sqlx {
+        println!();
+        println!("{}", "Rust:".bold());
+        if ctx.has_tokio { println!("  {} Tokio (async runtime)", "+".green()); }
+        if ctx.has_diesel { println!("  {} Diesel (ORM)", "+".green()); }
+        if ctx.has_sqlx { println!("  {} SQLx (database)", "+".green()); }
+    }
+
+    // Go
+    if ctx.is_go || ctx.has_golangci_lint {
+        println!();
+        println!("{}", "Go:".bold());
+        if ctx.has_golangci_lint { println!("  {} golangci-lint", "+".green()); }
+    }
+
+    // Infrastructure
+    if ctx.has_docker || ctx.has_kubernetes || ctx.has_terraform
+        || ctx.has_github_actions || ctx.has_gitlab_ci
+    {
+        println!();
+        println!("{}", "Infrastructure:".bold());
+        if ctx.has_docker { println!("  {} Docker", "+".green()); }
+        if ctx.has_kubernetes { println!("  {} Kubernetes", "+".green()); }
+        if ctx.has_terraform { println!("  {} Terraform", "+".green()); }
+        if ctx.has_github_actions { println!("  {} GitHub Actions", "+".green()); }
+        if ctx.has_gitlab_ci { println!("  {} GitLab CI", "+".green()); }
+    }
+
+    // Prompt adjustments
+    println!();
+    println!("{}", "Prompt Adjustments:".bold());
+
+    let mut has_adjustments = false;
+    if ctx.n1_context().is_some() {
+        println!("  {} N+1 prompts will note Goldiloader/Bullet usage", "*".yellow());
+        has_adjustments = true;
+    }
+    if ctx.security_context().is_some() {
+        println!("  {} Security prompts will note existing security tooling", "*".yellow());
+        has_adjustments = true;
+    }
+
+    if !has_adjustments {
+        println!("  {} No prompt adjustments", "-".dimmed());
+    }
 }
 
 async fn run_workflow(name: &str, dir: &Path, config: &config::Config) -> Result<()> {
