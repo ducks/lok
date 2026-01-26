@@ -2,11 +2,12 @@ use crate::backend;
 use crate::config::Config;
 use anyhow::{Context, Result};
 use colored::Colorize;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub struct Conductor {
-    api_key: String,
+    api_key: SecretString,
     model: String,
     client: reqwest::Client,
     config: Config,
@@ -78,7 +79,7 @@ impl Conductor {
             ))?;
 
         Ok(Self {
-            api_key: api_key.to_string(),
+            api_key: api_key.clone(),
             model: model.to_string(),
             client: client.clone(),
             config: config.clone(),
@@ -230,7 +231,7 @@ Always explain your reasoning briefly before making tool calls."#,
             let response = self
                 .client
                 .post("https://api.anthropic.com/v1/messages")
-                .header("x-api-key", &self.api_key)
+                .header("x-api-key", self.api_key.expose_secret())
                 .header("anthropic-version", "2023-06-01")
                 .header("content-type", "application/json")
                 .json(&request)
