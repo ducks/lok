@@ -151,20 +151,6 @@ impl Cache {
 
         Ok(())
     }
-
-    /// Clear all cached results
-    #[allow(dead_code)]
-    pub fn clear(&self) -> Result<()> {
-        if self.dir.exists() {
-            for entry in fs::read_dir(&self.dir)? {
-                let entry = entry?;
-                if entry.path().extension().is_some_and(|e| e == "json") {
-                    fs::remove_file(entry.path())?;
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]

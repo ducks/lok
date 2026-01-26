@@ -60,15 +60,6 @@ pub fn create_claude_backend(config: &Config) -> Result<ClaudeBackend> {
     ClaudeBackend::new(backend_config)
 }
 
-#[cfg(feature = "bedrock")]
-pub async fn create_bedrock_backend(config: &Config) -> Result<BedrockBackend> {
-    let backend_config = config
-        .backends
-        .get("bedrock")
-        .ok_or_else(|| anyhow::anyhow!("Bedrock backend not configured"))?;
-    BedrockBackend::new(backend_config).await
-}
-
 pub fn get_backends(config: &Config, filter: Option<&str>) -> Result<Vec<Arc<dyn Backend>>> {
     let mut backends = Vec::new();
 

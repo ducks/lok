@@ -1,5 +1,6 @@
 use crate::backend::{self, Backend};
 use crate::config::Config;
+use crate::utils::truncate;
 use anyhow::Result;
 use colored::Colorize;
 use std::path::Path;
@@ -213,15 +214,5 @@ impl<'a> Debate<'a> {
             Consider both perspectives when making your decision.",
             summary
         )
-    }
-}
-
-fn truncate(s: &str, max_chars: usize) -> String {
-    let char_count = s.chars().count();
-    if char_count <= max_chars {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max_chars).collect();
-        format!("{}...", truncated)
     }
 }
