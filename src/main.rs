@@ -9,6 +9,7 @@ mod output;
 mod spawn;
 mod tasks;
 mod team;
+mod utils;
 mod workflow;
 
 use anyhow::Result;
