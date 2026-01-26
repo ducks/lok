@@ -106,6 +106,23 @@ lok init
 Note: Codex requires being in a git repo it trusts. Run from your project
 directory.
 
+## Recommended Workflow
+
+The simplest way to use lok is from inside an LLM that acts as your conductor.
+If you're already in Claude Code, Codex, or another LLM CLI, just call lok as a
+command:
+
+```
+You: Find performance issues in this codebase
+Claude: [runs: lok ask --backend codex "Find N+1 queries and performance issues"]
+Claude: I found 3 N+1 queries. Let me get a second opinion on the auth module...
+Claude: [runs: lok ask --backend gemini "Review auth module for performance"]
+```
+
+This way your LLM session handles the orchestration naturally. It sees results,
+reasons about them, and decides when to query other backends. No need for
+`lok conduct` unless you want fully automated multi-round orchestration.
+
 ## Example Output
 
 ```
