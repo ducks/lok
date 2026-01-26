@@ -4,6 +4,7 @@ use crate::delegation::Delegator;
 use anyhow::{Context, Result};
 use colored::Colorize;
 use futures::future::join_all;
+use secrecy::ExposeSecret;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -107,7 +108,7 @@ Rules:
 
         let response = client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", api_key)
+            .header("x-api-key", api_key.expose_secret())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&request)

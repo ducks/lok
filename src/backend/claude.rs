@@ -1,6 +1,7 @@
 use crate::config::BackendConfig;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use std::env;
 use std::path::Path;
@@ -12,7 +13,7 @@ use tokio::process::Command;
 pub enum ClaudeMode {
     /// Use Claude API directly (requires ANTHROPIC_API_KEY)
     Api {
-        api_key: String,
+        api_key: SecretString,
         model: String,
         client: reqwest::Client,
     },
@@ -55,8 +56,9 @@ impl ClaudeBackend {
                 .clone()
                 .unwrap_or_else(|| "ANTHROPIC_API_KEY".to_string());
 
-            let api_key = env::var(&api_key_env)
-                .with_context(|| format!("Missing environment variable: {}", api_key_env))?;
+            let api_key: SecretString = env::var(&api_key_env)
+                .with_context(|| format!("Missing environment variable: {}", api_key_env))?
+                .into();
 
             let model = config
                 .model
@@ -76,7 +78,7 @@ impl ClaudeBackend {
     }
 
     /// Get API mode details (for conductor)
-    pub fn api_details(&self) -> Option<(&str, &str, &reqwest::Client)> {
+    pub fn api_details(&self) -> Option<(&SecretString, &str, &reqwest::Client)> {
         match &self.mode {
             ClaudeMode::Api {
                 api_key,
@@ -111,7 +113,7 @@ impl ClaudeBackend {
 
         let response = client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", api_key)
+            .header("x-api-key", api_key.expose_secret())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&request)
@@ -155,7 +157,8 @@ impl ClaudeBackend {
             cmd.arg("--model").arg(m);
         }
 
-        cmd.arg(prompt)
+        cmd.arg("--") // Prevent prompt from being interpreted as flags
+            .arg(prompt)
             .current_dir(cwd)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -205,7 +208,7 @@ impl super::Backend for ClaudeBackend {
 
     fn is_available(&self) -> bool {
         match &self.mode {
-            ClaudeMode::Api { api_key, .. } => !api_key.is_empty(),
+            ClaudeMode::Api { api_key, .. } => !api_key.expose_secret().is_empty(),
             ClaudeMode::Cli { command, .. } => which::which(command).is_ok(),
         }
     }
