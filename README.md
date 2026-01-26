@@ -93,6 +93,11 @@ lok spawn "task" --agent "api:Build REST endpoints" --agent "ui:Build React comp
 lok hunt .     # Bug hunt (N+1, dead code)
 lok audit .    # Security audit
 
+# Run workflows (multi-step pipelines)
+lok run security-review        # Run a workflow by name
+lok workflow list              # List available workflows
+lok workflow validate my.toml  # Validate a workflow file
+
 # List available backends
 lok backends
 
@@ -122,6 +127,55 @@ Claude: [runs: lok ask --backend gemini "Review auth module for performance"]
 This way your LLM session handles the orchestration naturally. It sees results,
 reasons about them, and decides when to query other backends. No need for
 `lok conduct` unless you want fully automated multi-round orchestration.
+
+## Workflows
+
+Workflows are TOML files that define multi-step LLM pipelines. Each step uses
+a backend and can depend on previous steps, interpolating their outputs.
+
+```toml
+# ~/.config/lok/workflows/security-review.toml
+name = "security-review"
+description = "Multi-pass security review"
+
+[[steps]]
+name = "initial-scan"
+backend = "codex"
+prompt = "Find obvious security issues: injection, auth bypass, hardcoded secrets"
+
+[[steps]]
+name = "deep-audit"
+backend = "claude"
+depends_on = ["initial-scan"]
+prompt = """
+Review these findings and investigate deeper:
+{{ steps.initial-scan.output }}
+"""
+
+[[steps]]
+name = "synthesize"
+backend = "ollama"
+depends_on = ["initial-scan", "deep-audit"]
+prompt = """
+Combine findings into a prioritized report:
+Initial: {{ steps.initial-scan.output }}
+Deep: {{ steps.deep-audit.output }}
+"""
+```
+
+Run with:
+```bash
+lok run security-review
+```
+
+**Workflow locations:**
+- `.lok/workflows/` - project-local workflows
+- `~/.config/lok/workflows/` - global workflows
+
+**Features:**
+- `{{ steps.NAME.output }}` - interpolate previous step output
+- `depends_on` - declare dependencies for execution order
+- `when` - conditional execution (e.g., `when = "steps.scan.output contains 'critical'"`)
 
 ## Example Output
 

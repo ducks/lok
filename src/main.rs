@@ -8,11 +8,12 @@ mod output;
 mod spawn;
 mod tasks;
 mod team;
+mod workflow;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "lok")]
@@ -140,6 +141,42 @@ enum Commands {
         /// Manually specify agents (format: "name:description")
         #[arg(short, long)]
         agent: Option<Vec<String>>,
+    },
+
+    /// Run or manage workflows (multi-step pipelines)
+    #[command(subcommand)]
+    Workflow(WorkflowCommands),
+
+    /// Shorthand for 'workflow run'
+    Run {
+        /// Workflow name or path
+        name: String,
+
+        /// Working directory
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkflowCommands {
+    /// Run a workflow
+    Run {
+        /// Workflow name or path to .toml file
+        name: String,
+
+        /// Working directory
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+
+    /// List available workflows
+    List,
+
+    /// Validate a workflow file
+    Validate {
+        /// Path to workflow file
+        path: PathBuf,
     },
 }
 
@@ -382,6 +419,94 @@ async fn main() -> Result<()> {
             println!("{}", "=".repeat(50).dimmed());
             println!("{}", "Full output saved.".green());
             println!("{}", result);
+        }
+        Commands::Workflow(subcmd) => match subcmd {
+            WorkflowCommands::Run { name, dir } => {
+                run_workflow(&name, &dir, &config).await?;
+            }
+            WorkflowCommands::List => {
+                list_workflows()?;
+            }
+            WorkflowCommands::Validate { path } => {
+                validate_workflow(&path)?;
+            }
+        },
+        Commands::Run { name, dir } => {
+            // Shorthand for 'workflow run'
+            run_workflow(&name, &dir, &config).await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_workflow(name: &str, dir: &Path, config: &config::Config) -> Result<()> {
+    let path = workflow::find_workflow(name)?;
+    let wf = workflow::load_workflow(&path)?;
+
+    let cwd = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let runner = workflow::WorkflowRunner::new(config.clone(), cwd);
+
+    let results = runner.run(&wf).await?;
+    workflow::print_results(&results);
+
+    Ok(())
+}
+
+fn list_workflows() -> Result<()> {
+    let workflows = workflow::list_workflows()?;
+
+    if workflows.is_empty() {
+        println!("{}", "No workflows found.".yellow());
+        println!();
+        println!("Create workflows in:");
+        println!("  - .lok/workflows/           (project-local)");
+        println!("  - ~/.config/lok/workflows/  (global)");
+        return Ok(());
+    }
+
+    println!("{}", "Available workflows:".bold());
+    println!();
+
+    for (path, wf) in workflows {
+        let location = if path.starts_with(".lok") {
+            "(local)".dimmed()
+        } else {
+            "(global)".dimmed()
+        };
+
+        println!("  {} {}", wf.name.cyan(), location);
+        if let Some(desc) = &wf.description {
+            println!("    {}", desc.dimmed());
+        }
+        println!("    {} steps", wf.steps.len());
+        println!();
+    }
+
+    Ok(())
+}
+
+fn validate_workflow(path: &Path) -> Result<()> {
+    let wf = workflow::load_workflow(path)?;
+
+    println!("{} {}", "✓".green(), "Workflow is valid".bold());
+    println!();
+    println!("  Name: {}", wf.name);
+    if let Some(desc) = &wf.description {
+        println!("  Description: {}", desc);
+    }
+    println!("  Steps: {}", wf.steps.len());
+    println!();
+
+    for (i, step) in wf.steps.iter().enumerate() {
+        println!(
+            "  {}. {} (backend: {})",
+            i + 1,
+            step.name.cyan(),
+            step.backend
+        );
+        if !step.depends_on.is_empty() {
+            println!("     depends on: {}", step.depends_on.join(", "));
         }
     }
 
