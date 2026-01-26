@@ -33,7 +33,12 @@ pub async fn run_task(config: &Config, task_name: &str, dir: &Path) -> Result<()
         output::print_prompt_header(&prompt_config.name);
 
         // Prepend relevant context based on prompt type
-        let prompt_with_context = prepend_context(&prompt_config.prompt, &prompt_config.name, task_name, &context);
+        let prompt_with_context = prepend_context(
+            &prompt_config.prompt,
+            &prompt_config.name,
+            task_name,
+            &context,
+        );
 
         let results = backend::run_query(&backends, &prompt_with_context, dir, config).await?;
         output::print_results(&results);
@@ -43,7 +48,12 @@ pub async fn run_task(config: &Config, task_name: &str, dir: &Path) -> Result<()
 }
 
 /// Prepend relevant codebase context to a prompt based on its type
-fn prepend_context(prompt: &str, prompt_name: &str, task_name: &str, context: &CodebaseContext) -> String {
+fn prepend_context(
+    prompt: &str,
+    prompt_name: &str,
+    task_name: &str,
+    context: &CodebaseContext,
+) -> String {
     let name_lower = prompt_name.to_lowercase();
     let task_lower = task_name.to_lowercase();
 
@@ -55,9 +65,12 @@ fn prepend_context(prompt: &str, prompt_name: &str, task_name: &str, context: &C
     }
 
     // Security related prompts
-    if task_lower.contains("audit") || task_lower.contains("security")
-        || name_lower.contains("injection") || name_lower.contains("xss")
-        || name_lower.contains("auth") || name_lower.contains("security")
+    if task_lower.contains("audit")
+        || task_lower.contains("security")
+        || name_lower.contains("injection")
+        || name_lower.contains("xss")
+        || name_lower.contains("auth")
+        || name_lower.contains("security")
     {
         if let Some(ctx) = context.security_context() {
             return format!("{}{}", ctx, prompt);

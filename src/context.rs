@@ -87,8 +87,9 @@ impl CodebaseContext {
         if let Ok(package_json) = fs::read_to_string(cwd.join("package.json")) {
             ctx.has_typescript =
                 package_json.contains("typescript") || cwd.join("tsconfig.json").exists();
-            ctx.has_eslint =
-                package_json.contains("eslint") || cwd.join(".eslintrc").exists() || cwd.join("eslint.config").exists();
+            ctx.has_eslint = package_json.contains("eslint")
+                || cwd.join(".eslintrc").exists()
+                || cwd.join("eslint.config").exists();
             ctx.has_prettier =
                 package_json.contains("prettier") || cwd.join(".prettierrc").exists();
             ctx.has_jest = package_json.contains("\"jest\"");
@@ -96,7 +97,8 @@ impl CodebaseContext {
             ctx.has_react = package_json.contains("\"react\"");
             ctx.has_vue = package_json.contains("\"vue\"");
             ctx.has_nextjs = package_json.contains("\"next\"");
-            ctx.has_tailwind = package_json.contains("tailwindcss") || cwd.join("tailwind.config.js").exists();
+            ctx.has_tailwind =
+                package_json.contains("tailwindcss") || cwd.join("tailwind.config.js").exists();
 
             if ctx.detected_language.is_none() {
                 ctx.detected_language = Some(if ctx.has_typescript {
@@ -110,7 +112,8 @@ impl CodebaseContext {
         // Python detection
         let requirements = fs::read_to_string(cwd.join("requirements.txt")).unwrap_or_default();
         let pyproject = fs::read_to_string(cwd.join("pyproject.toml")).unwrap_or_default();
-        let has_python_files = !requirements.is_empty() || !pyproject.is_empty() || cwd.join("setup.py").exists();
+        let has_python_files =
+            !requirements.is_empty() || !pyproject.is_empty() || cwd.join("setup.py").exists();
 
         if has_python_files {
             ctx.is_python = true;
@@ -161,7 +164,9 @@ impl CodebaseContext {
 
         // Infrastructure detection
         ctx.has_docker = cwd.join("Dockerfile").exists() || cwd.join("docker-compose.yml").exists();
-        ctx.has_kubernetes = cwd.join("k8s").exists() || cwd.join("kubernetes").exists() || cwd.join("helm").exists();
+        ctx.has_kubernetes = cwd.join("k8s").exists()
+            || cwd.join("kubernetes").exists()
+            || cwd.join("helm").exists();
         ctx.has_terraform = cwd.join("main.tf").exists() || cwd.join("terraform").exists();
         ctx.has_github_actions = cwd.join(".github/workflows").exists();
         ctx.has_gitlab_ci = cwd.join(".gitlab-ci.yml").exists();
@@ -266,10 +271,7 @@ impl CodebaseContext {
         }
 
         if self.has_alembic {
-            notes.push(
-                "This codebase uses Alembic for database migrations."
-                    .to_string(),
-            );
+            notes.push("This codebase uses Alembic for database migrations.".to_string());
         }
 
         if notes.is_empty() {
