@@ -174,16 +174,6 @@ impl CodebaseContext {
         ctx
     }
 
-    /// Check if any context was detected
-    pub fn has_context(&self) -> bool {
-        self.has_goldiloader
-            || self.has_bullet
-            || self.has_brakeman
-            || self.has_eslint
-            || self.has_typescript
-            || self.has_sqlalchemy
-    }
-
     /// Generate context string for N+1 detection prompts
     pub fn n1_context(&self) -> Option<String> {
         let mut notes = Vec::new();
@@ -258,56 +248,6 @@ impl CodebaseContext {
         }
     }
 
-    /// Generate context string for database/migration prompts
-    pub fn db_context(&self) -> Option<String> {
-        let mut notes = Vec::new();
-
-        if self.has_strong_migrations {
-            notes.push(
-                "This codebase uses StrongMigrations which catches unsafe migration patterns. \
-                 Focus on data integrity issues, complex multi-step migrations, and rollback safety."
-                    .to_string(),
-            );
-        }
-
-        if self.has_alembic {
-            notes.push("This codebase uses Alembic for database migrations.".to_string());
-        }
-
-        if notes.is_empty() {
-            None
-        } else {
-            Some(format!("CODEBASE CONTEXT:\n{}\n\n", notes.join("\n")))
-        }
-    }
-
-    /// Generate full context string for any prompt
-    pub fn full_context(&self) -> Option<String> {
-        let mut sections = Vec::new();
-
-        if let Some(lang) = &self.detected_language {
-            sections.push(format!("Primary language: {}", lang));
-        }
-
-        if self.has_goldiloader {
-            sections.push("- Uses Goldiloader (auto N+1 prevention)".to_string());
-        }
-        if self.has_bullet {
-            sections.push("- Uses Bullet (N+1 detection in dev)".to_string());
-        }
-        if self.has_brakeman {
-            sections.push("- Uses Brakeman (security scanner)".to_string());
-        }
-        if self.has_typescript {
-            sections.push("- Uses TypeScript".to_string());
-        }
-
-        if sections.is_empty() {
-            None
-        } else {
-            Some(format!("CODEBASE CONTEXT:\n{}\n\n", sections.join("\n")))
-        }
-    }
 }
 
 #[cfg(test)]
@@ -355,7 +295,6 @@ mod tests {
         let dir = tempdir().unwrap();
         let ctx = CodebaseContext::detect(dir.path());
 
-        assert!(!ctx.has_context());
         assert!(ctx.n1_context().is_none());
         assert!(ctx.security_context().is_none());
     }
