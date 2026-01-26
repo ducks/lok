@@ -5,9 +5,9 @@ Claude, Ollama, and Bedrock through a single interface.
 
 ## How It Works
 
-Lok has three modes of operation:
+Lok has several modes of operation:
 
-### 1. Direct Query (Simplest)
+### Direct Query (Simplest)
 
 Ask one or more backends directly:
 
@@ -17,7 +17,32 @@ lok ask -b codex "Find dead code"             # Specific backend
 lok ask -b codex,gemini "Review this code"    # Multiple backends
 ```
 
-### 2. Workflows (Declarative Pipelines)
+### Debate Mode
+
+Have backends argue and refine their answers through multiple rounds:
+
+```bash
+lok debate "What's the best way to handle auth in this app?"
+lok debate --rounds 3 "Should we use async here?"
+```
+
+Each backend sees previous responses and can challenge or build on them.
+Great for architectural decisions where you want multiple perspectives.
+
+### Spawn Mode (Parallel Agents)
+
+Break a task into subtasks and run them in parallel:
+
+```bash
+lok spawn "Build a REST API with tests"
+lok spawn "task" --agent "api:Build endpoints" --agent "tests:Write test suite"
+```
+
+The conductor plans subtasks, delegates to appropriate backends, runs them
+in parallel, and synthesizes results. Good for larger tasks that can be
+parallelized.
+
+### Workflows (Declarative Pipelines)
 
 Define multi-step pipelines in TOML. Each step can use a different backend and
 depend on previous steps:
@@ -47,15 +72,15 @@ depends_on = ["scan", "investigate"]
 prompt = "Prioritize findings..."
 ```
 
-### 3. Conductor Mode (Autonomous)
+### Conductor Mode (Fully Autonomous)
 
-Let an LLM orchestrate the other backends:
+Let an LLM orchestrate everything automatically:
 
 ```bash
 lok conduct "Find and fix performance issues"
 ```
 
-The conductor analyzes your request, queries appropriate backends, reviews
+The conductor analyzes your request, decides which backends to query, reviews
 results, and synthesizes a final answer. Multiple rounds if needed.
 
 ## Recommended: LLM-as-Conductor
@@ -154,12 +179,24 @@ Features:
 ## Commands
 
 ```bash
-lok ask "prompt"              # Query backends
+# Querying
+lok ask "prompt"              # Query all backends
 lok ask -b codex "prompt"     # Specific backend
-lok hunt .                    # Bug hunt task
-lok audit .                   # Security audit task
+
+# Multi-agent modes
+lok debate "question"         # Backends debate each other
+lok spawn "task"              # Parallel subtask agents
+lok conduct "task"            # Fully autonomous orchestration
+
+# Predefined tasks
+lok hunt .                    # Bug hunt
+lok audit .                   # Security audit
+
+# Workflows
 lok run workflow-name         # Run a workflow
-lok conduct "task"            # Autonomous orchestration
+lok workflow list             # List workflows
+
+# Utilities
 lok suggest "task"            # Suggest best backend
 lok backends                  # List backends
 lok doctor                    # Check installation
