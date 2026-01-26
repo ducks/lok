@@ -39,8 +39,10 @@ ollama pull llama3.2
 ### From crates.io
 
 ```bash
-cargo install lok
+cargo install lokomotiv
 ```
+
+This installs both `lok` and `lokomotiv` binaries (they're identical).
 
 ### From source
 
@@ -191,6 +193,7 @@ Lok wraps existing LLM CLIs as pluggable backends:
 | codex | `codex` | Efficient, direct answers, good for patterns |
 | gemini | `npx @google/gemini-cli` | Thorough, investigative, goes deep |
 | claude | `claude` or API | Balanced, good for orchestration |
+| bedrock | AWS API | AWS-native, uses your existing AWS credentials |
 
 Adding a new backend requires implementing the `Backend` trait in
 `src/backend/`:
@@ -254,10 +257,33 @@ model = "llama3.2"                   # Default model
 lok ask --backend ollama "Explain this function"
 ```
 
+## Bedrock Backend
+
+AWS Bedrock requires building with the `bedrock` feature flag:
+
+```bash
+cargo install lokomotiv --features bedrock
+# or from source:
+cargo build --release --features bedrock
+```
+
+Configure with your AWS credentials (uses standard AWS credential chain):
+
+```toml
+[backends.bedrock]
+enabled = true
+model = "anthropic.claude-sonnet-4-20250514-v1:0"
+```
+
+```bash
+lok ask --backend bedrock "Explain this code"
+```
+
 ## Conductor Mode
 
 The `lok conduct` command runs Claude as an orchestrating agent that
-delegates to other backends. Requires Claude API mode (set `ANTHROPIC_API_KEY`).
+delegates to other backends. Requires Claude API mode (set `ANTHROPIC_API_KEY`)
+or Bedrock with the `bedrock` feature.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...
