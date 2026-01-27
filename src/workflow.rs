@@ -34,6 +34,14 @@ static FIELD_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"\{\{\s*steps\.([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_]+)\s*\}\}").unwrap()
 });
 
+/// Regex for matching {{ env.VAR }} patterns (environment variables)
+static ENV_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\{\{\s*env\.([a-zA-Z0-9_]+)\s*\}\}").unwrap());
+
+/// Regex for matching {{ arg.N }} patterns (positional arguments, 1-indexed)
+static ARG_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\{\{\s*arg\.(\d+)\s*\}\}").unwrap());
+
 /// A file edit to apply
 #[derive(Debug, Deserialize, Clone)]
 pub struct FileEdit {
@@ -44,6 +52,7 @@ pub struct FileEdit {
 
 /// Structured output from an LLM step with edits
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Fields used for JSON schema, extracted via extract_json_field()
 pub struct AgenticOutput {
     #[serde(default)]
     pub edits: Vec<FileEdit>,
@@ -104,11 +113,12 @@ pub struct StepResult {
 pub struct WorkflowRunner {
     config: Config,
     cwd: PathBuf,
+    args: Vec<String>,
 }
 
 impl WorkflowRunner {
-    pub fn new(config: Config, cwd: PathBuf) -> Self {
-        Self { config, cwd }
+    pub fn new(config: Config, cwd: PathBuf, args: Vec<String>) -> Self {
+        Self { config, cwd, args }
     }
 
     /// Execute a workflow, returning results for each step
@@ -490,7 +500,7 @@ impl WorkflowRunner {
         true
     }
 
-    /// Interpolate with JSON field access: {{ steps.X.field }}
+    /// Interpolate with JSON field access: {{ steps.X.field }} and env vars: {{ env.VAR }}
     fn interpolate_with_fields(
         &self,
         template: &str,
@@ -498,7 +508,7 @@ impl WorkflowRunner {
     ) -> String {
         let mut output = self.interpolate(template, results);
 
-        // Also handle {{ steps.X.field }} for JSON field access
+        // Handle {{ steps.X.field }} for JSON field access
         for cap in FIELD_RE.captures_iter(template) {
             let full_match = cap.get(0).unwrap().as_str();
             let step_name = cap.get(1).unwrap().as_str();
@@ -516,6 +526,31 @@ impl WorkflowRunner {
                     extract_json_field(&r.output, field_name)
                 })
                 .unwrap_or_else(|| format!("[field {} not found]", field_name));
+
+            output = output.replace(full_match, &replacement);
+        }
+
+        // Handle {{ env.VAR }} for environment variables
+        for cap in ENV_RE.captures_iter(template) {
+            let full_match = cap.get(0).unwrap().as_str();
+            let var_name = cap.get(1).unwrap().as_str();
+
+            let replacement =
+                std::env::var(var_name).unwrap_or_else(|_| format!("[env {} not set]", var_name));
+
+            output = output.replace(full_match, &replacement);
+        }
+
+        // Handle {{ arg.N }} for positional arguments (1-indexed)
+        for cap in ARG_RE.captures_iter(template) {
+            let full_match = cap.get(0).unwrap().as_str();
+            let arg_index: usize = cap.get(1).unwrap().as_str().parse().unwrap_or(0);
+
+            let replacement = if arg_index > 0 && arg_index <= self.args.len() {
+                self.args[arg_index - 1].clone()
+            } else {
+                format!("[arg {} not provided]", arg_index)
+            };
 
             output = output.replace(full_match, &replacement);
         }

@@ -1,0 +1,76 @@
+# Review and merge a PR
+#
+# Usage:
+#   lok run review-pr 27
+#
+# This workflow:
+# 1. Fetches PR metadata and diff
+# 2. Has Claude do a deep code review
+# 3. If approved, merges with rebase
+
+name = "review-pr"
+description = "Review a PR and merge if approved"
+
+[[steps]]
+name = "fetch-meta"
+shell = "gh pr view {{ arg.1 }} --json title,body,additions,deletions,changedFiles,author"
+
+[[steps]]
+name = "fetch-diff"
+shell = "gh pr diff {{ arg.1 }}"
+
+[[steps]]
+name = "review"
+backend = "claude"
+depends_on = ["fetch-meta", "fetch-diff"]
+prompt = """
+You are reviewing PR #{{ arg.1 }}.
+
+## PR Metadata
+{{ steps.fetch-meta.output }}
+
+## Code Changes
+{{ steps.fetch-diff.output }}
+
+Perform a thorough code review. Check for:
+1. Correctness - Does the code do what it claims?
+2. Bugs - Are there any logic errors, edge cases, or potential crashes?
+3. Security - Any security issues (injection, unsafe operations)?
+4. Style - Does it follow project conventions?
+5. Tests - Should there be tests? Are existing tests adequate?
+
+Output JSON:
+{
+  "approved": true or false,
+  "summary": "one-line summary of your review",
+  "strengths": ["what's good about this PR"],
+  "concerns": ["issues that should be addressed, if any"],
+  "verdict": "APPROVE, REQUEST_CHANGES, or COMMENT"
+}
+
+Be critical but fair. Only approve if the code is genuinely good.
+"""
+
+[[steps]]
+name = "post-review"
+shell = """
+gh pr review {{ arg.1 }} --body '## Automated Code Review
+
+{{ steps.review.summary }}
+
+### Strengths
+{{ steps.review.strengths }}
+
+### Concerns
+{{ steps.review.concerns }}
+
+---
+🤖 Reviewed by lok'
+"""
+depends_on = ["review"]
+
+[[steps]]
+name = "merge"
+shell = "gh pr merge {{ arg.1 }} --rebase --delete-branch"
+depends_on = ["review"]
+when = "steps.review.output contains '\"approved\": true'"
