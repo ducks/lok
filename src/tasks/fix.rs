@@ -42,7 +42,12 @@ pub async fn run(
 
     println!();
     println!("{}", "=".repeat(50).dimmed());
-    println!("{} #{}: {}", "Issue".cyan().bold(), issue.number, issue.title);
+    println!(
+        "{} #{}: {}",
+        "Issue".cyan().bold(),
+        issue.number,
+        issue.title
+    );
     println!("{}", "=".repeat(50).dimmed());
 
     if issue.state != "OPEN" {
@@ -74,7 +79,10 @@ pub async fn run(
     // Build the fix prompt
     let prompt = build_fix_prompt(&issue, &code_context);
 
-    println!("{} Analyzing issue and generating fix...", "fix:".cyan().bold());
+    println!(
+        "{} Analyzing issue and generating fix...",
+        "fix:".cyan().bold()
+    );
     println!();
 
     // Get backends
@@ -209,7 +217,8 @@ fn gather_code_context(dir: &Path, issue: &GitHubIssue) -> Result<String> {
                     context.push_str(&format!("### Matches for '{}':\n", keyword));
                     context.push_str("```\n");
                     // Limit grep output
-                    let limited: String = grep_result.lines().take(20).collect::<Vec<_>>().join("\n");
+                    let limited: String =
+                        grep_result.lines().take(20).collect::<Vec<_>>().join("\n");
                     context.push_str(&limited);
                     context.push_str("\n```\n\n");
                 }
