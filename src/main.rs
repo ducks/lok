@@ -59,6 +59,18 @@ enum Commands {
         /// Directory to analyze
         #[arg(default_value = ".")]
         dir: PathBuf,
+
+        /// Create issues for each finding (auto-detects gh or glab)
+        #[arg(long)]
+        issues: bool,
+
+        /// Issue backend: github, gitlab, or auto (default: auto)
+        #[arg(long, default_value = "auto")]
+        issue_backend: String,
+
+        /// Skip confirmation prompt when creating issues
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 
     /// Run a security audit on a codebase
@@ -286,8 +298,13 @@ async fn main() -> Result<()> {
                 backend::print_verbose_timing(&results);
             }
         }
-        Commands::Hunt { dir } => {
-            tasks::hunt::run(&config, &dir).await?;
+        Commands::Hunt {
+            dir,
+            issues,
+            issue_backend,
+            yes,
+        } => {
+            tasks::hunt::run(&config, &dir, issues, &issue_backend, yes).await?;
         }
         Commands::Audit { dir } => {
             tasks::audit::run(&config, &dir).await?;
