@@ -12,6 +12,16 @@ use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+/// Regex for matching {{ steps.NAME.output }} patterns
+static INTERPOLATE_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\{\{\s*steps\.([a-zA-Z0-9_-]+)\.output\s*\}\}").unwrap());
+
+/// Regex for matching "steps.X.output contains 'Y'" conditions
+static CONDITION_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#"steps\.([a-zA-Z0-9_-]+)\.output\s+contains\s+['"](.+)['"]"#).unwrap()
+});
 
 /// A workflow definition loaded from TOML
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -278,10 +288,7 @@ impl WorkflowRunner {
     fn interpolate(&self, template: &str, results: &HashMap<String, StepResult>) -> String {
         let mut output = template.to_string();
 
-        // Match {{ steps.NAME.output }}
-        let re = regex::Regex::new(r"\{\{\s*steps\.([a-zA-Z0-9_-]+)\.output\s*\}\}").unwrap();
-
-        for cap in re.captures_iter(template) {
+        for cap in INTERPOLATE_RE.captures_iter(template) {
             let full_match = cap.get(0).unwrap().as_str();
             let step_name = cap.get(1).unwrap().as_str();
 
@@ -299,11 +306,7 @@ impl WorkflowRunner {
     /// Evaluate a simple condition like "steps.scan.output contains 'critical'"
     fn evaluate_condition(&self, condition: &str, results: &HashMap<String, StepResult>) -> bool {
         // Simple parser for "steps.X.output contains 'Y'"
-        if let Some(caps) =
-            regex::Regex::new(r#"steps\.([a-zA-Z0-9_-]+)\.output\s+contains\s+['"](.+)['"]"#)
-                .unwrap()
-                .captures(condition)
-        {
+        if let Some(caps) = CONDITION_RE.captures(condition) {
             let step_name = caps.get(1).unwrap().as_str();
             let search_str = caps.get(2).unwrap().as_str();
 

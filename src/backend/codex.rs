@@ -73,13 +73,12 @@ impl super::Backend for CodexBackend {
             .await
             .context("Failed to execute codex command")?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
         if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!("Codex failed: {}", stderr);
         }
 
+        let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(self.parse_output(&stdout))
     }
 
