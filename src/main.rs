@@ -201,6 +201,10 @@ enum Commands {
         /// Working directory
         #[arg(short, long, default_value = ".")]
         dir: PathBuf,
+
+        /// Positional arguments for the workflow (accessible as {{ arg.1 }}, {{ arg.2 }}, etc.)
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
     },
 
     /// Show detected codebase context
@@ -269,6 +273,10 @@ enum WorkflowCommands {
         /// Working directory
         #[arg(short, long, default_value = ".")]
         dir: PathBuf,
+
+        /// Positional arguments for the workflow (accessible as {{ arg.1 }}, {{ arg.2 }}, etc.)
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
     },
 
     /// List available workflows
@@ -540,8 +548,8 @@ async fn main() -> Result<()> {
             println!("{}", result);
         }
         Commands::Workflow(subcmd) => match subcmd {
-            WorkflowCommands::Run { name, dir } => {
-                run_workflow(&name, &dir, &config).await?;
+            WorkflowCommands::Run { name, dir, args } => {
+                run_workflow(&name, &dir, args, &config).await?;
             }
             WorkflowCommands::List => {
                 list_workflows()?;
@@ -550,9 +558,9 @@ async fn main() -> Result<()> {
                 validate_workflow(&path)?;
             }
         },
-        Commands::Run { name, dir } => {
+        Commands::Run { name, dir, args } => {
             // Shorthand for 'workflow run'
-            run_workflow(&name, &dir, &config).await?;
+            run_workflow(&name, &dir, args, &config).await?;
         }
         Commands::Context { dir } => {
             show_context(&dir);
@@ -808,12 +816,17 @@ fn show_context(dir: &Path) {
     }
 }
 
-async fn run_workflow(name: &str, dir: &Path, config: &config::Config) -> Result<()> {
+async fn run_workflow(
+    name: &str,
+    dir: &Path,
+    args: Vec<String>,
+    config: &config::Config,
+) -> Result<()> {
     let path = workflow::find_workflow(name)?;
     let wf = workflow::load_workflow(&path)?;
 
     let cwd = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-    let runner = workflow::WorkflowRunner::new(config.clone(), cwd);
+    let runner = workflow::WorkflowRunner::new(config.clone(), cwd, args);
 
     let results = runner.run(&wf).await?;
     workflow::print_results(&results);
