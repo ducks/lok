@@ -184,6 +184,21 @@ enum Commands {
         #[arg(long)]
         unstaged: bool,
     },
+
+    /// Explain a codebase structure and architecture
+    Explain {
+        /// Directory to analyze
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+
+        /// Specific backends to use (comma-separated)
+        #[arg(short, long)]
+        backend: Option<String>,
+
+        /// Focus on a specific aspect (e.g., "auth", "database", "api")
+        #[arg(short, long)]
+        focus: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -483,6 +498,9 @@ async fn main() -> Result<()> {
                 cli.verbose,
             )
             .await?;
+        }
+        Commands::Explain { dir, backend, focus } => {
+            run_explain(&dir, backend.as_deref(), focus.as_deref(), &config, cli.verbose).await?;
         }
     }
 
@@ -858,6 +876,193 @@ Be concise and specific. Reference line numbers when possible.
 {}
 ```"#,
         diff
+    );
+
+    let backends = backend::get_backends(config, backend_filter)?;
+
+    if verbose {
+        backend::print_verbose_header(&prompt, &backends, dir);
+    }
+
+    let results = backend::run_query(&backends, &prompt, dir, config).await?;
+    output::print_results(&results);
+
+    if verbose {
+        backend::print_verbose_timing(&results);
+    }
+
+    Ok(())
+}
+
+async fn run_explain(
+    dir: &Path,
+    backend_filter: Option<&str>,
+    focus: Option<&str>,
+    config: &config::Config,
+    verbose: bool,
+) -> Result<()> {
+    use std::fs;
+
+    println!("{}", "Lok Explain".cyan().bold());
+    println!("{}", "=".repeat(50).dimmed());
+
+    let cwd = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    println!("Analyzing: {}", cwd.display().to_string().yellow());
+    println!();
+
+    // Gather codebase information
+    let mut info = String::new();
+
+    // Check for README
+    let readme_variants = ["README.md", "README", "readme.md", "README.txt"];
+    for readme in readme_variants {
+        let path = cwd.join(readme);
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                let truncated = if content.len() > 3000 {
+                    format!("{}...\n[truncated]", &content[..3000])
+                } else {
+                    content
+                };
+                info.push_str(&format!("=== {} ===\n{}\n\n", readme, truncated));
+            }
+            break;
+        }
+    }
+
+    // Check for package manifests
+    let manifests = [
+        ("Cargo.toml", "Rust"),
+        ("package.json", "Node.js"),
+        ("pyproject.toml", "Python"),
+        ("go.mod", "Go"),
+        ("Gemfile", "Ruby"),
+        ("pom.xml", "Java/Maven"),
+        ("build.gradle", "Java/Gradle"),
+    ];
+
+    for (manifest, lang) in manifests {
+        let path = cwd.join(manifest);
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                let truncated = if content.len() > 2000 {
+                    format!("{}...\n[truncated]", &content[..2000])
+                } else {
+                    content
+                };
+                info.push_str(&format!("=== {} ({}) ===\n{}\n\n", manifest, lang, truncated));
+            }
+        }
+    }
+
+    // Build directory tree (top 2 levels)
+    info.push_str("=== Directory Structure ===\n");
+    if let Ok(entries) = fs::read_dir(&cwd) {
+        let mut dirs: Vec<String> = Vec::new();
+        let mut files: Vec<String> = Vec::new();
+
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            // Skip hidden files and common noise
+            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "vendor" {
+                continue;
+            }
+
+            if entry.path().is_dir() {
+                // List contents of subdirectory
+                let mut subentries = Vec::new();
+                if let Ok(subdir) = fs::read_dir(entry.path()) {
+                    for subentry in subdir.flatten().take(10) {
+                        let subname = subentry.file_name().to_string_lossy().to_string();
+                        if !subname.starts_with('.') {
+                            let suffix = if subentry.path().is_dir() { "/" } else { "" };
+                            subentries.push(format!("{}{}", subname, suffix));
+                        }
+                    }
+                }
+
+                if subentries.is_empty() {
+                    dirs.push(format!("{}/", name));
+                } else {
+                    dirs.push(format!("{}/\n    {}", name, subentries.join(", ")));
+                }
+            } else {
+                files.push(name);
+            }
+        }
+
+        dirs.sort();
+        files.sort();
+
+        for d in dirs {
+            info.push_str(&format!("  {}\n", d));
+        }
+        for f in files {
+            info.push_str(&format!("  {}\n", f));
+        }
+    }
+    info.push('\n');
+
+    // Detect context
+    let ctx = context::CodebaseContext::detect(&cwd);
+    if ctx.detected_language.is_some() || ctx.is_rails || ctx.has_docker {
+        info.push_str("=== Detected Stack ===\n");
+        if let Some(lang) = &ctx.detected_language {
+            info.push_str(&format!("Language: {}\n", lang));
+        }
+        if ctx.is_rails {
+            info.push_str("Framework: Rails\n");
+        }
+        if ctx.has_react {
+            info.push_str("Frontend: React\n");
+        }
+        if ctx.has_vue {
+            info.push_str("Frontend: Vue\n");
+        }
+        if ctx.has_nextjs {
+            info.push_str("Framework: Next.js\n");
+        }
+        if ctx.is_django {
+            info.push_str("Framework: Django\n");
+        }
+        if ctx.is_fastapi {
+            info.push_str("Framework: FastAPI\n");
+        }
+        if ctx.has_docker {
+            info.push_str("Infrastructure: Docker\n");
+        }
+        if ctx.has_kubernetes {
+            info.push_str("Infrastructure: Kubernetes\n");
+        }
+        if ctx.has_terraform {
+            info.push_str("Infrastructure: Terraform\n");
+        }
+        info.push('\n');
+    }
+
+    // Build the prompt
+    let focus_instruction = match focus {
+        Some(f) => format!(
+            "\n\nFocus specifically on: {}. Explain how {} is handled in this codebase.",
+            f, f
+        ),
+        None => String::new(),
+    };
+
+    let prompt = format!(
+        r#"Explain the structure and architecture of this codebase. Include:
+
+1. **Purpose**: What does this project do? What problem does it solve?
+2. **Architecture**: How is the code organized? What are the main components?
+3. **Key Files**: Which files are most important for understanding the codebase?
+4. **Entry Points**: Where does execution start? How do you run/use it?
+5. **Dependencies**: What external libraries/services does it rely on?
+
+Be concise but thorough. A developer new to this codebase should understand the big picture after reading your explanation.{}
+
+{}
+"#,
+        focus_instruction, info
     );
 
     let backends = backend::get_backends(config, backend_filter)?;

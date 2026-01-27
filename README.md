@@ -86,6 +86,20 @@ lok diff HEAD~3             # Review last 3 commits
 Catches bugs, security issues, and style problems in your changes before they
 land. Great for pre-commit review.
 
+### Explain Mode
+
+Get a high-level explanation of any codebase:
+
+```bash
+lok explain                         # Explain current directory
+lok explain /path/to/project        # Explain specific project
+lok explain --focus auth            # Focus on auth specifically
+lok explain --focus database -b claude  # Use specific backend
+```
+
+Scans the README, package manifests, and directory structure to give a developer
+new to the codebase a quick overview of purpose, architecture, and key files.
+
 ### Conductor Mode (Fully Autonomous)
 
 Let an LLM orchestrate everything automatically:
@@ -228,6 +242,10 @@ lok conduct "task"            # Fully autonomous orchestration
 # Code review
 lok diff                      # Review staged changes
 lok diff main..HEAD           # Review branch diff
+
+# Codebase analysis
+lok explain                   # Explain codebase structure
+lok explain --focus auth      # Focus on specific aspect
 
 # Predefined tasks
 lok hunt .                    # Bug hunt
