@@ -72,6 +72,35 @@ depends_on = ["scan", "investigate"]
 prompt = "Prioritize findings..."
 ```
 
+#### Agentic Workflows
+
+Workflows can also run shell commands and apply code edits automatically:
+
+```toml
+[[steps]]
+name = "fix"
+backend = "claude"
+apply_edits = true              # Parse and apply JSON edits from output
+verify = "cargo build"          # Run after edits to verify they work
+prompt = """
+Fix this issue. Output JSON:
+{"edits": [{"file": "src/main.rs", "old": "...", "new": "..."}], "summary": "fix description"}
+"""
+
+[[steps]]
+name = "commit"
+shell = "git add -A && git commit -m '{{ steps.fix.summary }}'"
+depends_on = ["fix"]
+```
+
+Features:
+- `shell`: Run a shell command instead of LLM query
+- `apply_edits`: Parse JSON with `{edits: [{file, old, new}]}` and apply to files
+- `verify`: Shell command to run after edits (fails step if non-zero exit)
+- `{{ steps.X.field }}`: Extract JSON fields from step output
+
+Example self-heal workflow: `examples/workflows/self-heal.toml`
+
 ### Diff Review
 
 Review git changes before committing:
