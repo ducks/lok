@@ -227,7 +227,9 @@ async fn main() -> Result<()> {
 
             // Cache the results
             if !no_cache {
-                let _ = cache.set(&cache_key, &results);
+                if let Err(e) = cache.set(&cache_key, &results) {
+                    eprintln!("{} Failed to cache results: {}", "warning:".yellow(), e);
+                }
             }
 
             output::print_results(&results);

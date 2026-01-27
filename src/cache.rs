@@ -79,6 +79,14 @@ pub struct Cache {
     enabled: bool,
 }
 
+/// Get current Unix timestamp, returning None if system clock is invalid
+fn current_timestamp() -> Option<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
+}
+
 impl Cache {
     pub fn new(config: &CacheConfig) -> Self {
         let dir = dirs::cache_dir()
@@ -114,10 +122,7 @@ impl Cache {
         let entry: CacheEntry = serde_json::from_str(&content).ok()?;
 
         // Check TTL
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = current_timestamp()?;
 
         if now - entry.timestamp > self.ttl.as_secs() {
             // Expired, remove it
@@ -134,14 +139,17 @@ impl Cache {
             return Ok(());
         }
 
+        // Skip caching if system clock is invalid
+        let timestamp = match current_timestamp() {
+            Some(ts) => ts,
+            None => return Ok(()),
+        };
+
         // Ensure cache directory exists
         fs::create_dir_all(&self.dir)?;
 
         let entry = CacheEntry {
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp,
             results: results.iter().map(CachedResult::from).collect(),
         };
 
