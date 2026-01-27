@@ -1,4 +1,5 @@
 pub mod audit;
+pub mod fix;
 pub mod hunt;
 
 use crate::backend;

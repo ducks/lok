@@ -73,6 +73,24 @@ enum Commands {
         yes: bool,
     },
 
+    /// Fix a GitHub issue
+    Fix {
+        /// Issue number, #number, or full URL
+        issue: String,
+
+        /// Working directory
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+
+        /// Specific backend to use
+        #[arg(short, long)]
+        backend: Option<String>,
+
+        /// Dry run - analyze but don't suggest applying changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Run a security audit on a codebase
     Audit {
         /// Directory to analyze
@@ -305,6 +323,14 @@ async fn main() -> Result<()> {
             yes,
         } => {
             tasks::hunt::run(&config, &dir, issues, &issue_backend, yes).await?;
+        }
+        Commands::Fix {
+            issue,
+            dir,
+            backend,
+            dry_run,
+        } => {
+            tasks::fix::run(&config, &dir, &issue, backend.as_deref(), dry_run).await?;
         }
         Commands::Audit { dir } => {
             tasks::audit::run(&config, &dir).await?;

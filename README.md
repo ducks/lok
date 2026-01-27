@@ -102,6 +102,22 @@ review. Organizes feedback by severity (critical, important, minor, nitpick).
 
 Requires: GitHub CLI installed and authenticated (`gh auth login`).
 
+### Fix GitHub Issues
+
+Analyze a GitHub issue and suggest fixes:
+
+```bash
+lok fix 123                 # Analyze issue #123 in current repo
+lok fix #123                # Same (with hash)
+lok fix https://github.com/owner/repo/issues/123  # From URL
+lok fix 123 --dry-run       # Analysis only, no fix suggestions
+```
+
+Fetches issue title, body, and labels via GitHub CLI (`gh`), then sends to LLM
+backends for analysis and fix suggestions.
+
+Requires: GitHub CLI installed and authenticated (`gh auth login`).
+
 ### Explain Mode
 
 Get a high-level explanation of any codebase:
@@ -259,6 +275,9 @@ lok conduct "task"            # Fully autonomous orchestration
 lok diff                      # Review staged changes
 lok diff main..HEAD           # Review branch diff
 lok pr 123                    # Review GitHub PR
+
+# Issue analysis
+lok fix 123                   # Analyze GitHub issue
 
 # Codebase analysis
 lok explain                   # Explain codebase structure
