@@ -86,6 +86,22 @@ lok diff HEAD~3             # Review last 3 commits
 Catches bugs, security issues, and style problems in your changes before they
 land. Great for pre-commit review.
 
+### PR Review
+
+Review GitHub pull requests:
+
+```bash
+lok pr 123                  # Review PR #123 in current repo
+lok pr owner/repo#123       # Review PR in specific repo
+lok pr https://github.com/owner/repo/pull/123  # Review from URL
+lok pr 123 --repo owner/repo  # Explicit repo flag
+```
+
+Fetches PR metadata and diff via GitHub CLI (`gh`), then sends to backends for
+review. Organizes feedback by severity (critical, important, minor, nitpick).
+
+Requires: GitHub CLI installed and authenticated (`gh auth login`).
+
 ### Conductor Mode (Fully Autonomous)
 
 Let an LLM orchestrate everything automatically:
@@ -228,6 +244,7 @@ lok conduct "task"            # Fully autonomous orchestration
 # Code review
 lok diff                      # Review staged changes
 lok diff main..HEAD           # Review branch diff
+lok pr 123                    # Review GitHub PR
 
 # Predefined tasks
 lok hunt .                    # Bug hunt
