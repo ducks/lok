@@ -1,4 +1,5 @@
 pub mod audit;
+pub mod ci;
 pub mod fix;
 pub mod hunt;
 
