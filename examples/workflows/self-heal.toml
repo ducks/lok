@@ -1,0 +1,111 @@
+# Self-healing workflow: find bugs, fix them, commit, and PR
+#
+# Usage:
+#   lok flow self-heal
+#
+# This workflow:
+# 1. Analyzes codebase for the highest priority bug
+# 2. Generates a fix with JSON edits
+# 3. Applies the edits and verifies with cargo build
+# 4. Creates a feature branch
+# 5. Commits with an LLM-generated message
+# 6. Pushes and creates a PR
+
+name = "self-heal"
+description = "Find a bug, fix it, and open a PR"
+
+[[steps]]
+name = "analyze"
+backend = "claude"
+prompt = """
+Analyze this codebase for bugs, performance issues, or code smells.
+Pick the SINGLE highest priority issue that can be fixed with a simple edit.
+
+Output JSON:
+{
+  "file": "path/to/file.rs",
+  "line": 42,
+  "issue": "brief description of the problem",
+  "severity": "high|medium|low"
+}
+
+Focus on issues that are clearly wrong, not style preferences.
+"""
+
+[[steps]]
+name = "fix"
+backend = "claude"
+depends_on = ["analyze"]
+apply_edits = true
+verify = "cargo build"
+prompt = """
+Fix this issue:
+{{ steps.analyze.output }}
+
+Output a JSON object with:
+1. "edits": array of {file, old, new} objects for the exact text replacements
+2. "summary": one-line description of the fix (for commit message)
+
+Example:
+{
+  "edits": [
+    {"file": "src/main.rs", "old": "let x = 1;", "new": "let x = 2;"}
+  ],
+  "summary": "fix off-by-one error in loop bounds"
+}
+
+IMPORTANT:
+- The "old" text must match EXACTLY what's in the file (including whitespace)
+- Keep edits minimal - only change what's necessary
+- The "summary" should be suitable for a commit message
+"""
+
+[[steps]]
+name = "branch"
+shell = "git checkout -b fix/auto-$(date +%s)"
+depends_on = ["fix"]
+
+[[steps]]
+name = "message"
+backend = "claude"
+depends_on = ["fix"]
+prompt = """
+Write a git commit message for this fix.
+
+Issue that was fixed:
+{{ steps.analyze.output }}
+
+Fix applied:
+{{ steps.fix.output }}
+
+Format: type(scope): description
+
+Where type is one of: fix, perf, refactor, chore
+Keep it concise (under 72 chars for the first line).
+Output ONLY the commit message, nothing else.
+"""
+
+[[steps]]
+name = "commit"
+shell = "git add -A && git commit -m '{{ steps.message.output }}'"
+depends_on = ["branch", "message"]
+
+[[steps]]
+name = "push"
+shell = "git push -u origin HEAD"
+depends_on = ["commit"]
+
+[[steps]]
+name = "pr"
+shell = """
+gh pr create \
+  --title '{{ steps.message.output }}' \
+  --body 'Auto-generated fix by lok self-heal workflow.
+
+## Issue
+{{ steps.analyze.output }}
+
+## Fix
+{{ steps.fix.summary }}'
+"""
+depends_on = ["push"]
