@@ -44,8 +44,8 @@ parallelized.
 
 ### Workflows (Declarative Pipelines)
 
-Define multi-step pipelines in TOML. Each step can use a different backend and
-depend on previous steps:
+Define multi-step pipelines in TOML. Steps without dependencies run in parallel;
+dependent steps wait for their inputs:
 
 ```bash
 lok run security-review    # Run a workflow
@@ -186,9 +186,32 @@ prompts = [
 Workflows live in `.lok/workflows/` (project) or `~/.config/lok/workflows/` (global).
 
 Features:
+- **Parallel execution** - steps without dependencies run simultaneously
 - `{{ steps.NAME.output }}` - interpolate previous output
 - `depends_on = ["step1", "step2"]` - execution order
 - `when = "..."` - conditional execution
+
+Example with parallel steps:
+```toml
+[[steps]]
+name = "bugs"
+backend = "codex"
+prompt = "Find bugs"
+
+[[steps]]
+name = "security"
+backend = "gemini"
+prompt = "Find security issues"
+
+# bugs and security run in parallel (no dependencies)
+# synthesize waits for both to complete
+
+[[steps]]
+name = "synthesize"
+depends_on = ["bugs", "security"]
+backend = "ollama"
+prompt = "Prioritize: {{ steps.bugs.output }} {{ steps.security.output }}"
+```
 
 ## Commands
 
