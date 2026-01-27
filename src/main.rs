@@ -12,7 +12,7 @@ mod team;
 mod utils;
 mod workflow;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use std::path::{Path, PathBuf};
@@ -164,6 +164,25 @@ enum Commands {
         /// Directory to analyze
         #[arg(default_value = ".")]
         dir: PathBuf,
+    },
+
+    /// Review git changes with LLM analysis
+    Diff {
+        /// Git diff spec (e.g., "main..HEAD", "HEAD~3"). Default: staged changes
+        #[arg(default_value = "")]
+        spec: String,
+
+        /// Working directory
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+
+        /// Specific backends to use (comma-separated)
+        #[arg(short, long)]
+        backend: Option<String>,
+
+        /// Include unstaged changes (when no spec given)
+        #[arg(long)]
+        unstaged: bool,
     },
 }
 
@@ -449,6 +468,22 @@ async fn main() -> Result<()> {
         Commands::Context { dir } => {
             show_context(&dir);
         }
+        Commands::Diff {
+            spec,
+            dir,
+            backend,
+            unstaged,
+        } => {
+            run_diff(
+                &spec,
+                &dir,
+                backend.as_deref(),
+                unstaged,
+                &config,
+                cli.verbose,
+            )
+            .await?;
+        }
     }
 
     Ok(())
@@ -728,6 +763,114 @@ fn validate_workflow(path: &Path) -> Result<()> {
         if !step.depends_on.is_empty() {
             println!("     depends on: {}", step.depends_on.join(", "));
         }
+    }
+
+    Ok(())
+}
+
+async fn run_diff(
+    spec: &str,
+    dir: &Path,
+    backend_filter: Option<&str>,
+    unstaged: bool,
+    config: &config::Config,
+    verbose: bool,
+) -> Result<()> {
+    use std::process::Command;
+
+    println!("{}", "Lok Diff Review".cyan().bold());
+    println!("{}", "=".repeat(50).dimmed());
+
+    // Build git diff command
+    let mut cmd = Command::new("git");
+    cmd.current_dir(dir);
+    cmd.arg("diff");
+
+    let diff_description = if spec.is_empty() {
+        if unstaged {
+            // Show all changes (staged + unstaged)
+            "all uncommitted changes"
+        } else {
+            // Default: staged changes only
+            cmd.arg("--cached");
+            "staged changes"
+        }
+    } else {
+        // User-provided spec
+        cmd.arg(spec);
+        spec
+    };
+
+    println!("Analyzing: {}", diff_description.yellow());
+    println!();
+
+    let output = cmd.output().context("Failed to run git diff")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git diff failed: {}", stderr);
+    }
+
+    let diff = String::from_utf8_lossy(&output.stdout);
+
+    if diff.trim().is_empty() {
+        println!("{}", "No changes to review.".yellow());
+        println!();
+        println!("Tips:");
+        println!(
+            "  {} - review staged changes (default)",
+            "lok diff".dimmed()
+        );
+        println!(
+            "  {} - review all uncommitted changes",
+            "lok diff --unstaged".dimmed()
+        );
+        println!(
+            "  {} - review branch vs main",
+            "lok diff main..HEAD".dimmed()
+        );
+        return Ok(());
+    }
+
+    // Count lines changed
+    let additions = diff.lines().filter(|l| l.starts_with('+')).count();
+    let deletions = diff.lines().filter(|l| l.starts_with('-')).count();
+    println!(
+        "Changes: {} additions, {} deletions",
+        format!("+{}", additions).green(),
+        format!("-{}", deletions).red()
+    );
+    println!();
+
+    // Build review prompt
+    let prompt = format!(
+        r#"Review the following git diff. Look for:
+- Bugs or logic errors
+- Security issues
+- Performance problems
+- Code style issues
+- Missing error handling
+- Suggestions for improvement
+
+Be concise and specific. Reference line numbers when possible.
+
+```diff
+{}
+```"#,
+        diff
+    );
+
+    let backends = backend::get_backends(config, backend_filter)?;
+
+    if verbose {
+        backend::print_verbose_header(&prompt, &backends, dir);
+    }
+
+    let results = backend::run_query(&backends, &prompt, dir, config).await?;
+    output::print_results(&results);
+
+    if verbose {
+        backend::print_verbose_timing(&results);
     }
 
     Ok(())

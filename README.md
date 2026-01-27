@@ -72,6 +72,20 @@ depends_on = ["scan", "investigate"]
 prompt = "Prioritize findings..."
 ```
 
+### Diff Review
+
+Review git changes before committing:
+
+```bash
+lok diff                    # Review staged changes
+lok diff --unstaged         # Review all uncommitted changes
+lok diff main..HEAD         # Review branch vs main
+lok diff HEAD~3             # Review last 3 commits
+```
+
+Catches bugs, security issues, and style problems in your changes before they
+land. Great for pre-commit review.
+
 ### Conductor Mode (Fully Autonomous)
 
 Let an LLM orchestrate everything automatically:
@@ -187,6 +201,10 @@ lok ask -b codex "prompt"     # Specific backend
 lok debate "question"         # Backends debate each other
 lok spawn "task"              # Parallel subtask agents
 lok conduct "task"            # Fully autonomous orchestration
+
+# Code review
+lok diff                      # Review staged changes
+lok diff main..HEAD           # Review branch diff
 
 # Predefined tasks
 lok hunt .                    # Bug hunt
