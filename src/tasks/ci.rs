@@ -142,8 +142,8 @@ fn get_github_ci_status(dir: &Path, pr: &str) -> Result<(String, Vec<FailedCheck
         anyhow::bail!("Failed to get PR checks: {}", stderr);
     }
 
-    let checks: Vec<serde_json::Value> = serde_json::from_slice(&status_output.stdout)
-        .context("Failed to parse checks JSON")?;
+    let checks: Vec<serde_json::Value> =
+        serde_json::from_slice(&status_output.stdout).context("Failed to parse checks JSON")?;
 
     // Build status summary
     let mut status_lines = vec!["Check Status:".to_string()];
@@ -165,7 +165,12 @@ fn get_github_ci_status(dir: &Path, pr: &str) -> Result<(String, Vec<FailedCheck
             _ => "?".dimmed().to_string(),
         };
 
-        status_lines.push(format!("  {} {} ({})", status_icon, name, state.to_lowercase()));
+        status_lines.push(format!(
+            "  {} {} ({})",
+            status_icon,
+            name,
+            state.to_lowercase()
+        ));
     }
 
     let status = status_lines.join("\n");
@@ -312,7 +317,10 @@ fn build_analysis_prompt(failed_checks: &[FailedCheck]) -> String {
     );
 
     for check in failed_checks {
-        prompt.push_str(&format!("=== {} ===\n```\n{}\n```\n\n", check.name, check.log));
+        prompt.push_str(&format!(
+            "=== {} ===\n```\n{}\n```\n\n",
+            check.name, check.log
+        ));
     }
 
     prompt
