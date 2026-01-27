@@ -1,7 +1,7 @@
 use crate::backend::{self, Backend};
 use crate::config::Config;
-use crate::utils::truncate;
 use crate::delegation::Delegator;
+use crate::utils::truncate;
 use anyhow::Result;
 use colored::Colorize;
 use std::path::Path;
