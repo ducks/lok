@@ -28,6 +28,7 @@ pub struct BackendProfile {
 }
 
 /// Smart delegation based on task type
+#[derive(Clone)]
 pub struct Delegator {
     profiles: HashMap<String, BackendProfile>,
 }
