@@ -377,9 +377,3 @@ AGENT: frontend | Build the UI"#,
         Ok(summary)
     }
 }
-
-impl Clone for Delegator {
-    fn clone(&self) -> Self {
-        Delegator::new()
-    }
-}
