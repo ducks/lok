@@ -184,6 +184,20 @@ enum Commands {
         #[arg(long)]
         unstaged: bool,
     },
+
+    /// Review a GitHub pull request
+    Pr {
+        /// PR number or URL (e.g., "123" or "owner/repo#123")
+        pr: String,
+
+        /// Repository (owner/repo). Defaults to current repo.
+        #[arg(short, long)]
+        repo: Option<String>,
+
+        /// Specific backends to use (comma-separated)
+        #[arg(short, long)]
+        backend: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -483,6 +497,9 @@ async fn main() -> Result<()> {
                 cli.verbose,
             )
             .await?;
+        }
+        Commands::Pr { pr, repo, backend } => {
+            run_pr_review(&pr, repo.as_deref(), backend.as_deref(), &config, cli.verbose).await?;
         }
     }
 
@@ -874,4 +891,221 @@ Be concise and specific. Reference line numbers when possible.
     }
 
     Ok(())
+}
+
+async fn run_pr_review(
+    pr: &str,
+    repo: Option<&str>,
+    backend_filter: Option<&str>,
+    config: &config::Config,
+    verbose: bool,
+) -> Result<()> {
+    use std::process::Command;
+
+    println!("{}", "Lok PR Review".cyan().bold());
+    println!("{}", "=".repeat(50).dimmed());
+
+    // Check if gh CLI is available
+    if which::which("gh").is_err() {
+        anyhow::bail!(
+            "GitHub CLI (gh) is required for PR review.\n\
+            Install it from: https://cli.github.com/"
+        );
+    }
+
+    // Parse PR identifier
+    let (owner_repo, pr_number) = parse_pr_identifier(pr, repo)?;
+
+    println!("Repository: {}", owner_repo.as_str().cyan());
+    println!("PR: #{}", pr_number.as_str().yellow());
+    println!();
+
+    // Get PR details
+    println!("{}", "Fetching PR details...".dimmed());
+    let pr_json = Command::new("gh")
+        .args([
+            "pr",
+            "view",
+            &pr_number,
+            "--repo",
+            &owner_repo,
+            "--json",
+            "title,body,state,additions,deletions,changedFiles,baseRefName,headRefName,author",
+        ])
+        .output()
+        .context("Failed to run gh pr view")?;
+
+    if !pr_json.status.success() {
+        let stderr = String::from_utf8_lossy(&pr_json.stderr);
+        anyhow::bail!("Failed to fetch PR: {}", stderr);
+    }
+
+    let pr_data: serde_json::Value =
+        serde_json::from_slice(&pr_json.stdout).context("Failed to parse PR JSON")?;
+
+    let title = pr_data["title"].as_str().unwrap_or("(no title)");
+    let body = pr_data["body"].as_str().unwrap_or("(no description)");
+    let state = pr_data["state"].as_str().unwrap_or("unknown");
+    let additions = pr_data["additions"].as_i64().unwrap_or(0);
+    let deletions = pr_data["deletions"].as_i64().unwrap_or(0);
+    let changed_files = pr_data["changedFiles"].as_i64().unwrap_or(0);
+    let base_ref = pr_data["baseRefName"].as_str().unwrap_or("main");
+    let head_ref = pr_data["headRefName"].as_str().unwrap_or("unknown");
+    let author = pr_data["author"]["login"].as_str().unwrap_or("unknown");
+
+    println!("Title: {}", title.bold());
+    println!("Author: {}", author);
+    println!("State: {}", state);
+    println!("Branch: {} -> {}", head_ref.cyan(), base_ref.green());
+    println!(
+        "Changes: {} files, {} {}, {} {}",
+        changed_files,
+        format!("+{}", additions).green(),
+        "additions".dimmed(),
+        format!("-{}", deletions).red(),
+        "deletions".dimmed()
+    );
+    println!();
+
+    // Get the diff
+    println!("{}", "Fetching PR diff...".dimmed());
+    let diff_output = Command::new("gh")
+        .args(["pr", "diff", &pr_number, "--repo", &owner_repo])
+        .output()
+        .context("Failed to run gh pr diff")?;
+
+    if !diff_output.status.success() {
+        let stderr = String::from_utf8_lossy(&diff_output.stderr);
+        anyhow::bail!("Failed to fetch PR diff: {}", stderr);
+    }
+
+    let diff = String::from_utf8_lossy(&diff_output.stdout);
+
+    if diff.trim().is_empty() {
+        println!("{}", "PR has no changes to review.".yellow());
+        return Ok(());
+    }
+
+    // Truncate diff if too large (LLMs have context limits)
+    let max_diff_chars = 50000;
+    let diff_for_review = if diff.len() > max_diff_chars {
+        println!(
+            "{}",
+            format!(
+                "Note: Diff truncated from {} to {} chars",
+                diff.len(),
+                max_diff_chars
+            )
+            .yellow()
+        );
+        &diff[..max_diff_chars]
+    } else {
+        &diff
+    };
+
+    // Build review prompt
+    let prompt = format!(
+        r#"Review this GitHub Pull Request.
+
+## PR Info
+- Title: {title}
+- Author: {author}
+- Branch: {head_ref} -> {base_ref}
+- Changes: {changed_files} files, +{additions}/-{deletions} lines
+
+## Description
+{body}
+
+## Diff
+```diff
+{diff_for_review}
+```
+
+## Review Instructions
+Provide a thorough code review. Look for:
+1. Bugs or logic errors
+2. Security vulnerabilities
+3. Performance issues
+4. Code style and best practices
+5. Missing tests or documentation
+6. Potential edge cases
+
+Be specific and reference file names and line numbers when possible.
+Organize your review by severity (critical, important, minor, nitpick)."#
+    );
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let backends = backend::get_backends(config, backend_filter)?;
+
+    if verbose {
+        backend::print_verbose_header(&prompt, &backends, &cwd);
+    }
+
+    let results = backend::run_query(&backends, &prompt, &cwd, config).await?;
+    output::print_results(&results);
+
+    if verbose {
+        backend::print_verbose_timing(&results);
+    }
+
+    Ok(())
+}
+
+/// Parse PR identifier into (owner/repo, pr_number)
+fn parse_pr_identifier(pr: &str, repo: Option<&str>) -> Result<(String, String)> {
+    use std::process::Command;
+
+    // Handle "owner/repo#123" format
+    if pr.contains('#') {
+        let parts: Vec<&str> = pr.splitn(2, '#').collect();
+        if parts.len() == 2 {
+            return Ok((parts[0].to_string(), parts[1].to_string()));
+        }
+    }
+
+    // Handle URL format
+    if pr.starts_with("http") {
+        // Extract from URL like https://github.com/owner/repo/pull/123
+        let parts: Vec<&str> = pr.split('/').collect();
+        if parts.len() >= 5 {
+            let owner_repo = format!("{}/{}", parts[parts.len() - 4], parts[parts.len() - 3]);
+            // Return the number part (might have query params)
+            let number = parts[parts.len() - 1]
+                .split('?')
+                .next()
+                .unwrap_or(parts[parts.len() - 1]);
+            return Ok((owner_repo, number.to_string()));
+        }
+    }
+
+    // If repo is provided, use it
+    if let Some(r) = repo {
+        return Ok((r.to_string(), pr.to_string()));
+    }
+
+    // Try to get repo from current directory
+    let output = Command::new("gh")
+        .args([
+            "repo",
+            "view",
+            "--json",
+            "nameWithOwner",
+            "-q",
+            ".nameWithOwner",
+        ])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let repo_name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !repo_name.is_empty() {
+                return Ok((repo_name, pr.to_string()));
+            }
+        }
+        _ => {}
+    }
+
+    anyhow::bail!(
+        "Could not determine repository. Use --repo owner/repo or run from within a git repo."
+    )
 }
