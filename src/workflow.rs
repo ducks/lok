@@ -8,6 +8,7 @@ use crate::backend;
 use crate::config::Config;
 use anyhow::{Context, Result};
 use colored::Colorize;
+use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -56,12 +57,13 @@ impl WorkflowRunner {
     }
 
     /// Execute a workflow, returning results for each step
+    /// Steps at the same depth level (no dependencies between them) run in parallel
     pub async fn run(&self, workflow: &Workflow) -> Result<Vec<StepResult>> {
         let mut results: HashMap<String, StepResult> = HashMap::new();
         let mut ordered_results: Vec<StepResult> = Vec::new();
 
-        // Topological sort of steps based on dependencies
-        let execution_order = self.resolve_order(&workflow.steps)?;
+        // Group steps by depth level for parallel execution
+        let depth_levels = self.group_by_depth(&workflow.steps)?;
 
         println!("{} {}", "Running workflow:".bold(), workflow.name.cyan());
         if let Some(ref desc) = workflow.description {
@@ -70,76 +72,132 @@ impl WorkflowRunner {
         println!("{}", "=".repeat(50).dimmed());
         println!();
 
-        for step_name in execution_order {
-            let step = workflow.steps.iter().find(|s| s.name == step_name).unwrap();
-
-            // Check condition if present
-            if let Some(ref condition) = step.when {
-                if !self.evaluate_condition(condition, &results) {
-                    println!(
-                        "{} {} (condition not met)",
-                        "[skip]".yellow(),
-                        step.name.bold()
-                    );
-                    continue;
-                }
+        for (depth, step_names) in depth_levels.iter().enumerate() {
+            let parallel_count = step_names.len();
+            if parallel_count > 1 {
+                println!(
+                    "{} Running {} steps in parallel (depth {})",
+                    "[parallel]".cyan(),
+                    parallel_count,
+                    depth
+                );
             }
 
-            println!("{} {}", "[step]".cyan(), step.name.bold());
+            // Collect steps to run at this depth
+            let mut steps_to_run: Vec<(&Step, String)> = Vec::new();
 
-            // Interpolate variables in prompt
-            let prompt = self.interpolate(&step.prompt, &results);
+            for step_name in step_names {
+                let step = workflow
+                    .steps
+                    .iter()
+                    .find(|s| &s.name == step_name)
+                    .unwrap();
 
-            // Get backend
-            let backend_config = self
-                .config
-                .backends
-                .get(&step.backend)
-                .ok_or_else(|| anyhow::anyhow!("Backend not found: {}", step.backend))?;
+                // Check condition if present
+                if let Some(ref condition) = step.when {
+                    if !self.evaluate_condition(condition, &results) {
+                        println!(
+                            "{} {} (condition not met)",
+                            "[skip]".yellow(),
+                            step.name.bold()
+                        );
+                        continue;
+                    }
+                }
 
-            let backend = backend::create_backend(&step.backend, backend_config)?;
+                // Interpolate variables in prompt (uses results from previous depths)
+                let prompt = self.interpolate(&step.prompt, &results);
+                steps_to_run.push((step, prompt));
+            }
 
-            if !backend.is_available() {
-                let result = StepResult {
-                    name: step.name.clone(),
-                    output: format!("Backend {} not available", step.backend),
-                    success: false,
-                    elapsed_ms: 0,
-                };
-                println!("  {} Backend not available", "✗".red());
-                results.insert(step.name.clone(), result.clone());
-                ordered_results.push(result);
+            if steps_to_run.is_empty() {
                 continue;
             }
 
-            // Execute
-            let start = std::time::Instant::now();
-            let output = backend.query(&prompt, &self.cwd).await;
-            let elapsed_ms = start.elapsed().as_millis() as u64;
+            // Execute steps at this depth in parallel
+            let futures: Vec<_> = steps_to_run
+                .into_iter()
+                .map(|(step, prompt)| {
+                    let config = self.config.clone();
+                    let cwd = self.cwd.clone();
+                    let step_name = step.name.clone();
+                    let backend_name = step.backend.clone();
 
-            let result = match output {
-                Ok(text) => {
-                    println!("  {} ({:.1}s)", "✓".green(), elapsed_ms as f64 / 1000.0);
-                    StepResult {
-                        name: step.name.clone(),
-                        output: text,
-                        success: true,
-                        elapsed_ms,
-                    }
-                }
-                Err(e) => {
-                    println!("  {} {}", "✗".red(), e);
-                    StepResult {
-                        name: step.name.clone(),
-                        output: format!("Error: {}", e),
-                        success: false,
-                        elapsed_ms,
-                    }
-                }
-            };
+                    async move {
+                        println!("{} {}", "[step]".cyan(), step_name.bold());
 
-            results.insert(step.name.clone(), result.clone());
-            ordered_results.push(result);
+                        // Get backend
+                        let backend_config = match config.backends.get(&backend_name) {
+                            Some(cfg) => cfg,
+                            None => {
+                                return StepResult {
+                                    name: step_name,
+                                    output: format!("Backend not found: {}", backend_name),
+                                    success: false,
+                                    elapsed_ms: 0,
+                                };
+                            }
+                        };
+
+                        let backend = match backend::create_backend(&backend_name, backend_config) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                return StepResult {
+                                    name: step_name,
+                                    output: format!("Failed to create backend: {}", e),
+                                    success: false,
+                                    elapsed_ms: 0,
+                                };
+                            }
+                        };
+
+                        if !backend.is_available() {
+                            println!("  {} Backend not available", "✗".red());
+                            return StepResult {
+                                name: step_name,
+                                output: format!("Backend {} not available", backend_name),
+                                success: false,
+                                elapsed_ms: 0,
+                            };
+                        }
+
+                        // Execute
+                        let start = std::time::Instant::now();
+                        let output = backend.query(&prompt, &cwd).await;
+                        let elapsed_ms = start.elapsed().as_millis() as u64;
+
+                        match output {
+                            Ok(text) => {
+                                println!("  {} ({:.1}s)", "✓".green(), elapsed_ms as f64 / 1000.0);
+                                StepResult {
+                                    name: step_name,
+                                    output: text,
+                                    success: true,
+                                    elapsed_ms,
+                                }
+                            }
+                            Err(e) => {
+                                println!("  {} {}", "✗".red(), e);
+                                StepResult {
+                                    name: step_name,
+                                    output: format!("Error: {}", e),
+                                    success: false,
+                                    elapsed_ms,
+                                }
+                            }
+                        }
+                    }
+                })
+                .collect();
+
+            // Wait for all steps at this depth to complete
+            let level_results = join_all(futures).await;
+
+            // Store results for use by dependent steps
+            for result in level_results {
+                results.insert(result.name.clone(), result.clone());
+                ordered_results.push(result);
+            }
         }
 
         println!();
@@ -148,48 +206,72 @@ impl WorkflowRunner {
         Ok(ordered_results)
     }
 
-    /// Resolve execution order using topological sort
-    fn resolve_order(&self, steps: &[Step]) -> Result<Vec<String>> {
-        let mut order = Vec::new();
-        let mut visited = HashMap::new();
-        let step_map: HashMap<_, _> = steps.iter().map(|s| (s.name.clone(), s)).collect();
-
+    /// Group steps by depth level for parallel execution
+    /// Depth 0 = no dependencies, Depth N = depends on steps at depth < N
+    fn group_by_depth(&self, steps: &[Step]) -> Result<Vec<Vec<String>>> {
+        // First validate dependencies exist
+        let step_names: std::collections::HashSet<_> = steps.iter().map(|s| &s.name).collect();
         for step in steps {
-            self.visit(&step.name, &step_map, &mut visited, &mut order)?;
+            for dep in &step.depends_on {
+                if !step_names.contains(dep) {
+                    anyhow::bail!("Step '{}' depends on unknown step '{}'", step.name, dep);
+                }
+            }
         }
 
-        Ok(order)
-    }
+        // Calculate depth for each step
+        let mut depths: HashMap<String, usize> = HashMap::new();
 
-    fn visit(
-        &self,
-        name: &str,
-        steps: &HashMap<String, &Step>,
-        visited: &mut HashMap<String, bool>,
-        order: &mut Vec<String>,
-    ) -> Result<()> {
-        if let Some(&in_progress) = visited.get(name) {
-            if in_progress {
+        fn calc_depth(
+            name: &str,
+            steps: &[Step],
+            depths: &mut HashMap<String, usize>,
+            visiting: &mut std::collections::HashSet<String>,
+        ) -> Result<usize> {
+            if let Some(&d) = depths.get(name) {
+                return Ok(d);
+            }
+
+            if visiting.contains(name) {
                 anyhow::bail!("Circular dependency detected at step: {}", name);
             }
-            return Ok(()); // Already processed
+
+            visiting.insert(name.to_string());
+
+            let step = steps.iter().find(|s| s.name == name).unwrap();
+            let depth = if step.depends_on.is_empty() {
+                0
+            } else {
+                let max_dep_depth = step
+                    .depends_on
+                    .iter()
+                    .map(|dep| calc_depth(dep, steps, depths, visiting))
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
+                    .max()
+                    .unwrap_or(0);
+                max_dep_depth + 1
+            };
+
+            visiting.remove(name);
+            depths.insert(name.to_string(), depth);
+            Ok(depth)
         }
 
-        visited.insert(name.to_string(), true); // Mark as in progress
-
-        if let Some(step) = steps.get(name) {
-            for dep in &step.depends_on {
-                if !steps.contains_key(dep) {
-                    anyhow::bail!("Step '{}' depends on unknown step '{}'", name, dep);
-                }
-                self.visit(dep, steps, visited, order)?;
-            }
+        let mut visiting = std::collections::HashSet::new();
+        for step in steps {
+            calc_depth(&step.name, steps, &mut depths, &mut visiting)?;
         }
 
-        visited.insert(name.to_string(), false); // Mark as done
-        order.push(name.to_string());
+        // Group by depth
+        let max_depth = depths.values().copied().max().unwrap_or(0);
+        let mut levels: Vec<Vec<String>> = vec![Vec::new(); max_depth + 1];
 
-        Ok(())
+        for (name, depth) in depths {
+            levels[depth].push(name);
+        }
+
+        Ok(levels)
     }
 
     /// Interpolate {{ steps.X.output }} variables in a string
