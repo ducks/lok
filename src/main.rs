@@ -514,10 +514,28 @@ async fn main() -> Result<()> {
             .await?;
         }
         Commands::Pr { pr, repo, backend } => {
-            run_pr_review(&pr, repo.as_deref(), backend.as_deref(), &config, cli.verbose).await?;
+            run_pr_review(
+                &pr,
+                repo.as_deref(),
+                backend.as_deref(),
+                &config,
+                cli.verbose,
+            )
+            .await?;
         }
-        Commands::Explain { dir, backend, focus } => {
-            run_explain(&dir, backend.as_deref(), focus.as_deref(), &config, cli.verbose).await?;
+        Commands::Explain {
+            dir,
+            backend,
+            focus,
+        } => {
+            run_explain(
+                &dir,
+                backend.as_deref(),
+                focus.as_deref(),
+                &config,
+                cli.verbose,
+            )
+            .await?;
         }
     }
 
@@ -1125,7 +1143,10 @@ async fn run_explain(
                 } else {
                     content
                 };
-                info.push_str(&format!("=== {} ({}) ===\n{}\n\n", manifest, lang, truncated));
+                info.push_str(&format!(
+                    "=== {} ({}) ===\n{}\n\n",
+                    manifest, lang, truncated
+                ));
             }
         }
     }
@@ -1139,7 +1160,11 @@ async fn run_explain(
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             // Skip hidden files and common noise
-            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "vendor" {
+            if name.starts_with('.')
+                || name == "node_modules"
+                || name == "target"
+                || name == "vendor"
+            {
                 continue;
             }
 
