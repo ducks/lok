@@ -6,6 +6,13 @@ use colored::Colorize;
 use serde::Deserialize;
 use std::path::Path;
 use std::process::Command;
+use std::sync::LazyLock;
+
+/// Regex for extracting file:line references from issue text
+static FILE_REF_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"([a-zA-Z0-9_/.-]+\.(rs|rb|py|js|ts|go|java|c|cpp|h|hpp|tsx|jsx)):(\d+)")
+        .unwrap()
+});
 
 #[derive(Debug, Deserialize)]
 struct GitHubIssue {
@@ -238,13 +245,7 @@ struct FileRef {
 fn extract_file_references(text: &str) -> Vec<FileRef> {
     let mut refs = Vec::new();
 
-    // Pattern: file.ext:123 or file.ext line 123
-    let re = regex::Regex::new(
-        r"([a-zA-Z0-9_/.-]+\.(rs|rb|py|js|ts|go|java|c|cpp|h|hpp|tsx|jsx)):(\d+)",
-    )
-    .unwrap();
-
-    for cap in re.captures_iter(text) {
+    for cap in FILE_REF_RE.captures_iter(text) {
         let path = cap[1].to_string();
         let line: usize = cap[3].parse().unwrap_or(0);
         refs.push(FileRef { path, line });
