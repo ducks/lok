@@ -73,6 +73,20 @@ enum Commands {
         yes: bool,
     },
 
+    /// Analyze CI failures for a PR
+    Ci {
+        /// PR number (e.g., "123")
+        pr: String,
+
+        /// Working directory
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+
+        /// Specific backends to use (comma-separated)
+        #[arg(short, long)]
+        backend: Option<String>,
+    },
+
     /// Run a security audit on a codebase
     Audit {
         /// Directory to analyze
@@ -305,6 +319,9 @@ async fn main() -> Result<()> {
             yes,
         } => {
             tasks::hunt::run(&config, &dir, issues, &issue_backend, yes).await?;
+        }
+        Commands::Ci { pr, dir, backend } => {
+            tasks::ci::run(&config, &dir, &pr, backend.as_deref()).await?;
         }
         Commands::Audit { dir } => {
             tasks::audit::run(&config, &dir).await?;

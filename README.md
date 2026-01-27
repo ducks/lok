@@ -102,6 +102,21 @@ review. Organizes feedback by severity (critical, important, minor, nitpick).
 
 Requires: GitHub CLI installed and authenticated (`gh auth login`).
 
+### CI Analysis
+
+Analyze CI failures for a pull request:
+
+```bash
+lok ci 123                  # Analyze failed checks for PR #123
+lok ci 123 -b codex         # Use specific backend
+```
+
+Fetches failed check logs via GitHub CLI (`gh run view --log-failed`) and sends
+them to LLM backends for root cause analysis. Supports both GitHub Actions and
+GitLab CI (auto-detected from git remote).
+
+Requires: GitHub CLI (`gh`) or GitLab CLI (`glab`) installed and authenticated.
+
 ### Explain Mode
 
 Get a high-level explanation of any codebase:
@@ -259,6 +274,7 @@ lok conduct "task"            # Fully autonomous orchestration
 lok diff                      # Review staged changes
 lok diff main..HEAD           # Review branch diff
 lok pr 123                    # Review GitHub PR
+lok ci 123                    # Analyze CI failures for PR
 
 # Codebase analysis
 lok explain                   # Explain codebase structure
