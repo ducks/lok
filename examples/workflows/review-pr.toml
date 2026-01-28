@@ -94,6 +94,7 @@ Analyze the reviews:
 1. What issues did BOTH find? (high confidence)
 2. What did only ONE find? (note which)
 3. Overall verdict?
+4. Are there follow-up issues needed? (e.g., same fix needed in other files)
 
 Output JSON:
 {
@@ -101,10 +102,14 @@ Output JSON:
   "critical": "bullet list of critical issues or None",
   "important": "bullet list of important issues or None",
   "minor": "bullet list of minor issues or None",
-  "summary": "2-3 sentence summary of the review"
+  "summary": "2-3 sentence summary of the review",
+  "followups": [
+    {"title": "Short issue title", "body": "Description of what needs to be done and where"}
+  ]
 }
 
-Only APPROVE if both reviewers found no critical/important issues.
+For followups: Only include if BOTH reviewers identified incomplete work (same pattern in other files).
+If no followups needed, use empty array: "followups": []
 Output only the JSON.
 """
 
@@ -127,3 +132,27 @@ gh pr comment {{ arg.1 }} --body "## lok Review (Claude + Codex consensus)
 ---
 *Automated review by lok review-pr workflow*"
 """
+
+[[steps]]
+name = "create_followups"
+backend = "claude"
+depends_on = ["synthesize"]
+prompt = """
+Based on this review synthesis, create GitHub issues for any follow-up work needed.
+
+Synthesis:
+{{ steps.synthesize.output }}
+
+If there are followups in the JSON, output shell commands to create them:
+
+gh issue create --title "TITLE" --body "BODY" --label bug
+
+If no followups needed, output: echo "No follow-up issues needed"
+
+Output ONLY the shell commands, nothing else.
+"""
+
+[[steps]]
+name = "run_followups"
+depends_on = ["create_followups"]
+shell = "{{ steps.create_followups.output }}"
