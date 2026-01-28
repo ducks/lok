@@ -11,6 +11,7 @@
 
 use crate::backend;
 use crate::config::Config;
+use crate::context::{resolve_verify_command, CodebaseContext};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use futures::future::join_all;
@@ -117,11 +118,18 @@ pub struct WorkflowRunner {
     config: Config,
     cwd: PathBuf,
     args: Vec<String>,
+    context: CodebaseContext,
 }
 
 impl WorkflowRunner {
     pub fn new(config: Config, cwd: PathBuf, args: Vec<String>) -> Self {
-        Self { config, cwd, args }
+        let context = CodebaseContext::detect(&cwd);
+        Self {
+            config,
+            cwd,
+            args,
+            context,
+        }
     }
 
     /// Execute a workflow, returning results for each step
@@ -188,7 +196,8 @@ impl WorkflowRunner {
                 let verify = step
                     .verify
                     .as_ref()
-                    .map(|v| self.interpolate_with_fields(v, &results));
+                    .map(|v| self.interpolate_with_fields(v, &results))
+                    .and_then(|v| resolve_verify_command(&v, &self.context));
                 steps_to_run.push((step, prompt, shell, verify));
             }
 
