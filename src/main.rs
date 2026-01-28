@@ -319,9 +319,14 @@ async fn main() -> Result<()> {
             let backend_names: Vec<String> =
                 backends.iter().map(|b| b.name().to_string()).collect();
             let cwd = dir.canonicalize().unwrap_or_else(|e| {
-            eprintln!("{} Failed to canonicalize path '{}': {}", "warning:".yellow(), dir.display(), e);
-            dir.clone()
-        });
+                eprintln!(
+                    "{} Failed to canonicalize path '{}': {}",
+                    "warning:".yellow(),
+                    dir.display(),
+                    e
+                );
+                dir.clone()
+            });
             let cwd_str = cwd.to_string_lossy().to_string();
 
             // Check cache first (unless --no-cache)
@@ -850,7 +855,12 @@ async fn run_workflow(
     let wf = workflow::load_workflow(&path)?;
 
     let cwd = dir.canonicalize().unwrap_or_else(|e| {
-        eprintln!("{} Failed to canonicalize path '{}': {}", "warning:".yellow(), dir.display(), e);
+        eprintln!(
+            "{} Failed to canonicalize path '{}': {}",
+            "warning:".yellow(),
+            dir.display(),
+            e
+        );
         dir.to_path_buf()
     });
     let runner = workflow::WorkflowRunner::new(config.clone(), cwd, args);
@@ -1213,7 +1223,12 @@ async fn run_explain(
     println!("{}", "=".repeat(50).dimmed());
 
     let cwd = dir.canonicalize().unwrap_or_else(|e| {
-        eprintln!("{} Failed to canonicalize path '{}': {}", "warning:".yellow(), dir.display(), e);
+        eprintln!(
+            "{} Failed to canonicalize path '{}': {}",
+            "warning:".yellow(),
+            dir.display(),
+            e
+        );
         dir.to_path_buf()
     });
     println!("Analyzing: {}", cwd.display().to_string().yellow());
