@@ -1,17 +1,18 @@
-# Pick an issue from GitHub and fix it
+# Pick an issue from GitHub and fix it with multi-backend consensus
 #
 # Usage:
 #   lok run pick-and-fix
 #
 # This workflow:
 # 1. Checks out main and pulls latest
-# 2. Fetches open issues from the repo
-# 3. Has the conductor pick the best one to fix
-# 4. Analyzes and generates a fix
-# 5. Applies, verifies, commits, and creates a PR
+# 2. Fetches open issues (excluding those with open PRs)
+# 3. Has Claude pick the best one to fix
+# 4. Gets fix proposals from multiple backends
+# 5. Backends debate and converge on the best approach
+# 6. Applies the consensus fix, verifies, commits, and creates a PR
 
 name = "pick-and-fix"
-description = "Pick the best open issue and fix it autonomously"
+description = "Pick the best open issue and fix it with multi-backend consensus"
 
 [[steps]]
 name = "setup"
@@ -23,19 +24,29 @@ depends_on = ["setup"]
 shell = "gh issue list --limit 10 --json number,title,body,labels"
 
 [[steps]]
+name = "open_prs"
+depends_on = ["setup"]
+shell = "gh pr list --json number,title,body --jq '[.[] | {number, title, body}]'"
+
+[[steps]]
 name = "pick"
 backend = "claude"
-depends_on = ["list"]
+depends_on = ["list", "open_prs"]
 prompt = """
 Here are the open issues for this repo:
 
 {{ steps.list.output }}
 
+These PRs are already open (skip issues they reference):
+
+{{ steps.open_prs.output }}
+
 Pick the ONE issue that:
-1. Is clearly defined (not vague or sprawling)
-2. Can be fixed with a focused code change
-3. Won't require major refactoring
-4. Has the highest impact-to-effort ratio
+1. Does NOT already have an open PR (check PR titles/bodies for "Closes #N" or "issue N")
+2. Is clearly defined (not vague or sprawling)
+3. Can be fixed with a focused code change
+4. Won't require major refactoring
+5. Has the highest impact-to-effort ratio
 
 Output JSON:
 {
@@ -53,20 +64,82 @@ depends_on = ["pick"]
 shell = "gh issue view {{ steps.pick.number }} --json body,comments"
 
 [[steps]]
-name = "fix"
+name = "propose_claude"
 backend = "claude"
 depends_on = ["fetch"]
-apply_edits = true
-verify = "cargo fmt && cargo build"
 prompt = """
-Fix this issue:
+Propose a fix for this issue:
 
 Issue #{{ steps.pick.number }}: {{ steps.pick.title }}
 
 Details:
 {{ steps.fetch.output }}
 
-Read the relevant code and generate a fix.
+Read the relevant code and propose the APPROACH to fix this.
+Don't output JSON yet - just explain:
+1. What's the root cause?
+2. What files need to change?
+3. What's your proposed fix?
+
+Be specific but concise.
+"""
+
+[[steps]]
+name = "propose_codex"
+backend = "codex"
+depends_on = ["fetch"]
+prompt = """
+Propose a fix for this issue:
+
+Issue #{{ steps.pick.number }}: {{ steps.pick.title }}
+
+Details:
+{{ steps.fetch.output }}
+
+Read the relevant code and propose the APPROACH to fix this.
+Don't output JSON yet - just explain:
+1. What's the root cause?
+2. What files need to change?
+3. What's your proposed fix?
+
+Be specific but concise.
+"""
+
+[[steps]]
+name = "debate"
+backend = "claude"
+depends_on = ["propose_claude", "propose_codex"]
+prompt = """
+Two AI backends proposed fixes for Issue #{{ steps.pick.number }}: {{ steps.pick.title }}
+
+CLAUDE's proposal:
+{{ steps.propose_claude.output }}
+
+CODEX's proposal:
+{{ steps.propose_codex.output }}
+
+Analyze both proposals:
+1. What do they agree on?
+2. Where do they differ?
+3. Which approach is better and why?
+4. What's the FINAL consensus approach?
+
+Output a clear, specific plan for the fix that incorporates the best ideas from both.
+"""
+
+[[steps]]
+name = "fix"
+backend = "claude"
+depends_on = ["debate"]
+apply_edits = true
+verify = "cargo fmt && cargo build"
+prompt = """
+Implement the consensus fix for Issue #{{ steps.pick.number }}: {{ steps.pick.title }}
+
+The debate concluded with this approach:
+{{ steps.debate.output }}
+
+Now generate the actual code edits.
 
 Output JSON:
 {
@@ -77,7 +150,7 @@ Output JSON:
 IMPORTANT:
 - "old" must match EXACTLY (including whitespace)
 - Keep edits minimal and focused
-- Make sure the fix is correct
+- Follow the consensus approach from the debate
 """
 
 [[steps]]
@@ -110,10 +183,13 @@ Closes #{{ steps.pick.number }}: {{ steps.pick.title }}
 ## Why this issue?
 {{ steps.pick.reason }}
 
+## Consensus approach
+{{ steps.debate.output }}
+
 ## Fix
 {{ steps.fix.summary }}
 
 ---
-Automated fix by lok pick-and-fix workflow.'
+Automated fix by lok pick-and-fix workflow (Claude + Codex consensus).'
 """
 depends_on = ["push"]
