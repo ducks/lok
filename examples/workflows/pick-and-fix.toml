@@ -1,0 +1,117 @@
+# Pick an issue from GitHub and fix it
+#
+# Usage:
+#   lok run pick-and-fix
+#
+# This workflow:
+# 1. Checks out main and pulls latest
+# 2. Fetches open issues from the repo
+# 3. Has the conductor pick the best one to fix
+# 4. Analyzes and generates a fix
+# 5. Applies, verifies, commits, and creates a PR
+
+name = "pick-and-fix"
+description = "Pick the best open issue and fix it autonomously"
+
+[[steps]]
+name = "setup"
+shell = "git checkout main && git pull"
+
+[[steps]]
+name = "list"
+depends_on = ["setup"]
+shell = "gh issue list --limit 10 --json number,title,body,labels"
+
+[[steps]]
+name = "pick"
+backend = "claude"
+depends_on = ["list"]
+prompt = """
+Here are the open issues for this repo:
+
+{{ steps.list.output }}
+
+Pick the ONE issue that:
+1. Is clearly defined (not vague or sprawling)
+2. Can be fixed with a focused code change
+3. Won't require major refactoring
+4. Has the highest impact-to-effort ratio
+
+Output JSON:
+{
+  "number": 123,
+  "title": "issue title",
+  "reason": "why this is the best pick"
+}
+
+Pick only ONE. Output only the JSON.
+"""
+
+[[steps]]
+name = "fetch"
+depends_on = ["pick"]
+shell = "gh issue view {{ steps.pick.number }} --json body,comments"
+
+[[steps]]
+name = "fix"
+backend = "claude"
+depends_on = ["fetch"]
+apply_edits = true
+verify = "cargo build"
+prompt = """
+Fix this issue:
+
+Issue #{{ steps.pick.number }}: {{ steps.pick.title }}
+
+Details:
+{{ steps.fetch.output }}
+
+Read the relevant code and generate a fix.
+
+Output JSON:
+{
+  "edits": [{"file": "path/to/file.rs", "old": "exact text to replace", "new": "replacement text"}],
+  "summary": "one-line description of the fix"
+}
+
+IMPORTANT:
+- "old" must match EXACTLY (including whitespace)
+- Keep edits minimal and focused
+- Make sure the fix is correct
+"""
+
+[[steps]]
+name = "branch"
+shell = "git checkout -b fix/issue-{{ steps.pick.number }}-$(date +%s)"
+depends_on = ["fix"]
+
+[[steps]]
+name = "commit"
+shell = "git add -A && git commit -m 'fix: {{ steps.fix.summary }}
+
+Closes #{{ steps.pick.number }}'"
+depends_on = ["branch"]
+
+[[steps]]
+name = "push"
+shell = "git push -u origin HEAD"
+depends_on = ["commit"]
+
+[[steps]]
+name = "pr"
+shell = """
+gh pr create \
+  --title 'fix: {{ steps.fix.summary }}' \
+  --body '## Issue
+Closes #{{ steps.pick.number }}: {{ steps.pick.title }}
+
+## Why this issue?
+{{ steps.pick.reason }}
+
+## Fix
+{{ steps.fix.summary }}
+
+---
+Automated fix by lok pick-and-fix workflow.'
+"""
+depends_on = ["push"]
