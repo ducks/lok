@@ -194,6 +194,7 @@ enum Commands {
     Workflow(WorkflowCommands),
 
     /// Shorthand for 'workflow run'
+    #[command(trailing_var_arg = true)]
     Run {
         /// Workflow name or path
         name: String,
@@ -207,7 +208,7 @@ enum Commands {
         output: Option<PathBuf>,
 
         /// Positional arguments for the workflow (accessible as {{ arg.1 }}, {{ arg.2 }}, etc.)
-        #[arg(trailing_var_arg = true)]
+        #[arg(allow_hyphen_values = true)]
         args: Vec<String>,
     },
 
@@ -270,6 +271,7 @@ enum Commands {
 #[derive(Subcommand)]
 enum WorkflowCommands {
     /// Run a workflow
+    #[command(trailing_var_arg = true)]
     Run {
         /// Workflow name or path to .toml file
         name: String,
@@ -283,7 +285,7 @@ enum WorkflowCommands {
         output: Option<PathBuf>,
 
         /// Positional arguments for the workflow (accessible as {{ arg.1 }}, {{ arg.2 }}, etc.)
-        #[arg(trailing_var_arg = true)]
+        #[arg(allow_hyphen_values = true)]
         args: Vec<String>,
     },
 
