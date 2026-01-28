@@ -57,7 +57,7 @@ name = "fix"
 backend = "claude"
 depends_on = ["fetch"]
 apply_edits = true
-verify = "cargo build"
+verify = "cargo fmt && cargo build"
 prompt = """
 Fix this issue:
 
