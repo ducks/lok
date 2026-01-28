@@ -371,7 +371,7 @@ fn parse_findings(results: &[QueryResult]) -> Vec<Finding> {
                         .trim()
                         .to_string();
 
-                    current_finding = Some((title.clone(), vec![rest.to_string()]));
+                    current_finding = Some((title, vec![rest.to_string()]));
                 }
             } else if let Some((_, ref mut body)) = current_finding {
                 // Add to current finding body
