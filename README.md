@@ -1,15 +1,59 @@
 # Lok
 
-Orchestration layer for coordinating multiple LLM backends. Query Codex, Gemini,
-Claude, Ollama, and Bedrock through a single interface.
+Orchestration layer for multiple LLM backends.
 
-## How It Works
+## The Big Idea
 
-Lok has several modes of operation:
+You're already in Claude Code (or Cursor, or Copilot). Instead of switching
+tools, let your LLM call other LLMs:
 
-### Direct Query (Simplest)
+```
+You: Find performance issues in this codebase
+Claude: [runs: lok ask -b codex "Find N+1 queries"]
+Claude: Found 3 issues. Let me verify with another backend...
+Claude: [runs: lok ask -b gemini "Review these findings"]
+```
 
-Ask one or more backends directly:
+Your LLM becomes the conductor. Lok is just the orchestra.
+
+## What Can It Do?
+
+Lok found 25 bugs in its own codebase, then found a real bug in Discourse
+(35k stars) that's now a merged PR. Here's how:
+
+```bash
+lok hunt .                    # Find bugs with multiple backends
+lok hunt --issues -y          # Find bugs AND create GitHub issues
+
+lok fix 123                   # Analyze a GitHub issue
+lok ci 123                    # Analyze CI failures
+lok pr 123                    # Review a pull request
+
+lok run full-heal             # Autonomous: hunt → fix → PR → review → merge
+```
+
+## Installation
+
+```bash
+cargo install lokomotiv
+```
+
+Prerequisites: Install the LLM CLIs you want to use (codex, gemini, ollama, etc.)
+
+## Quick Start
+
+```bash
+lok doctor                    # Check what's working
+lok ask "Explain this codebase"
+lok hunt .                    # Bug hunt
+lok audit .                   # Security audit
+```
+
+## All The Modes
+
+### Direct Query
+
+Ask one or more backends:
 
 ```bash
 lok ask "Find N+1 queries"                    # All backends
@@ -19,72 +63,66 @@ lok ask -b codex,gemini "Review this code"    # Multiple backends
 
 ### Debate Mode
 
-Have backends argue and refine their answers through multiple rounds:
+Have backends argue and refine answers:
 
 ```bash
-lok debate "What's the best way to handle auth in this app?"
+lok debate "What's the best way to handle auth?"
 lok debate --rounds 3 "Should we use async here?"
 ```
 
 Each backend sees previous responses and can challenge or build on them.
-Great for architectural decisions where you want multiple perspectives.
 
-### Spawn Mode (Parallel Agents)
+### Spawn Mode
 
-Break a task into subtasks and run them in parallel:
+Break a task into parallel subtasks:
 
 ```bash
 lok spawn "Build a REST API with tests"
-lok spawn "task" --agent "api:Build endpoints" --agent "tests:Write test suite"
 ```
 
-The conductor plans subtasks, delegates to appropriate backends, runs them
-in parallel, and synthesizes results. Good for larger tasks that can be
-parallelized.
+### Workflows
 
-### Workflows (Declarative Pipelines)
-
-Define multi-step pipelines in TOML. Steps without dependencies run in parallel;
-dependent steps wait for their inputs:
+Define multi-step pipelines in TOML:
 
 ```bash
-lok run security-review    # Run a workflow
-lok workflow list          # List available workflows
+lok run security-review       # Run a workflow
+lok workflow list             # List available workflows
 ```
 
 ```toml
-# Scout -> Tank -> Support pattern
 [[steps]]
 name = "scan"
-backend = "codex"          # Fast initial scan
+backend = "codex"
 prompt = "Find obvious issues"
 
 [[steps]]
 name = "investigate"
-backend = "gemini"         # Deep investigation
+backend = "gemini"
 depends_on = ["scan"]
 prompt = "Investigate: {{ steps.scan.output }}"
 
 [[steps]]
 name = "summarize"
-backend = "ollama"         # Local synthesis (no rate limits)
+backend = "ollama"
 depends_on = ["scan", "investigate"]
 prompt = "Prioritize findings..."
 ```
 
-#### Agentic Workflows
+Steps without dependencies run in parallel.
 
-Workflows can also run shell commands and apply code edits automatically:
+### Agentic Workflows
+
+Workflows can run shell commands and apply code edits:
 
 ```toml
 [[steps]]
 name = "fix"
 backend = "claude"
-apply_edits = true              # Parse and apply JSON edits from output
-verify = "cargo build"          # Run after edits to verify they work
+apply_edits = true
+verify = "cargo build"
 prompt = """
 Fix this issue. Output JSON:
-{"edits": [{"file": "src/main.rs", "old": "...", "new": "..."}], "summary": "fix description"}
+{"edits": [{"file": "src/main.rs", "old": "...", "new": "..."}], "summary": "..."}
 """
 
 [[steps]]
@@ -93,114 +131,30 @@ shell = "git add -A && git commit -m '{{ steps.fix.summary }}'"
 depends_on = ["fix"]
 ```
 
-Features:
-- `shell`: Run a shell command instead of LLM query
-- `apply_edits`: Parse JSON with `{edits: [{file, old, new}]}` and apply to files
-- `verify`: Shell command to run after edits (fails step if non-zero exit)
-- `{{ steps.X.field }}`: Extract JSON fields from step output
+See `examples/workflows/full-heal.toml` for the complete autonomous loop.
 
-Example self-heal workflow: `examples/workflows/self-heal.toml`
-
-### Diff Review
-
-Review git changes before committing:
+### Code Review
 
 ```bash
-lok diff                    # Review staged changes
-lok diff --unstaged         # Review all uncommitted changes
-lok diff main..HEAD         # Review branch vs main
-lok diff HEAD~3             # Review last 3 commits
+lok diff                      # Review staged changes
+lok diff main..HEAD           # Review branch vs main
+lok pr 123                    # Review GitHub PR
 ```
 
-Catches bugs, security issues, and style problems in your changes before they
-land. Great for pre-commit review.
+### Conductor Mode
 
-### PR Review
-
-Review GitHub pull requests:
-
-```bash
-lok pr 123                  # Review PR #123 in current repo
-lok pr owner/repo#123       # Review PR in specific repo
-lok pr https://github.com/owner/repo/pull/123  # Review from URL
-lok pr 123 --repo owner/repo  # Explicit repo flag
-```
-
-Fetches PR metadata and diff via GitHub CLI (`gh`), then sends to backends for
-review. Organizes feedback by severity (critical, important, minor, nitpick).
-
-Requires: GitHub CLI installed and authenticated (`gh auth login`).
-
-### Fix GitHub Issues
-
-Analyze a GitHub issue and suggest fixes:
-
-```bash
-lok fix 123                 # Analyze issue #123 in current repo
-lok fix #123                # Same (with hash)
-lok fix https://github.com/owner/repo/issues/123  # From URL
-lok fix 123 --dry-run       # Analysis only, no fix suggestions
-```
-
-Fetches issue title, body, and labels via GitHub CLI (`gh`), then sends to LLM
-backends for analysis and fix suggestions.
-
-Requires: GitHub CLI installed and authenticated (`gh auth login`).
-
-### CI Analysis
-
-Analyze CI failures for a pull request:
-
-```bash
-lok ci 123                  # Analyze failed checks for PR #123
-lok ci 123 -b codex         # Use specific backend
-```
-
-Fetches failed check logs via GitHub CLI (`gh run view --log-failed`) and sends
-them to LLM backends for root cause analysis. Supports both GitHub Actions and
-GitLab CI (auto-detected from git remote).
-
-Requires: GitHub CLI (`gh`) or GitLab CLI (`glab`) installed and authenticated.
-
-### Explain Mode
-
-Get a high-level explanation of any codebase:
-
-```bash
-lok explain                         # Explain current directory
-lok explain /path/to/project        # Explain specific project
-lok explain --focus auth            # Focus on auth specifically
-lok explain --focus database -b claude  # Use specific backend
-```
-
-Scans the README, package manifests, and directory structure to give a developer
-new to the codebase a quick overview of purpose, architecture, and key files.
-
-### Conductor Mode (Fully Autonomous)
-
-Let an LLM orchestrate everything automatically:
+Let an LLM orchestrate everything:
 
 ```bash
 lok conduct "Find and fix performance issues"
 ```
 
-The conductor analyzes your request, decides which backends to query, reviews
-results, and synthesizes a final answer. Multiple rounds if needed.
+### Explain Mode
 
-## Recommended: LLM-as-Conductor
-
-The simplest way to use lok is from inside an LLM session. If you're already in
-Claude Code or similar, just call lok as a tool:
-
+```bash
+lok explain                   # Explain current directory
+lok explain --focus auth      # Focus on specific aspect
 ```
-You: Find performance issues in this codebase
-Claude: [runs: lok ask -b codex "Find N+1 queries"]
-Claude: Found 3 issues. Let me get a second opinion on auth...
-Claude: [runs: lok ask -b gemini "Review auth module for performance"]
-```
-
-Your LLM handles orchestration naturally. It sees results, reasons about them,
-and decides when to query other backends.
 
 ## Backend Strengths
 
@@ -209,40 +163,8 @@ and decides when to query other backends.
 | codex | Code patterns, N+1, dead code | Fast |
 | gemini | Security audits, deep analysis | Slow (thorough) |
 | claude | Orchestration, reasoning | Medium |
-| ollama | Local/private, no rate limits | Varies (CPU/GPU) |
+| ollama | Local/private, no rate limits | Varies |
 | bedrock | AWS-native deployments | Medium |
-
-Use `lok suggest "your task"` to see which backend fits best.
-
-## Installation
-
-```bash
-# From crates.io
-cargo install lokomotiv
-
-# From source
-git clone https://github.com/ducks/lok
-cd lok && cargo build --release
-```
-
-Prerequisites: Install the LLM CLIs you want to use (codex, gemini, ollama, etc.)
-
-## Quick Start
-
-```bash
-# Initialize config (optional)
-lok init
-
-# Check what's working
-lok doctor
-
-# Run a query
-lok ask "Explain this codebase"
-
-# Run predefined tasks
-lok hunt .     # Bug hunt
-lok audit .    # Security audit
-```
 
 ## Configuration
 
@@ -267,40 +189,8 @@ model = "qwen2.5-coder:7b"
 description = "Find bugs"
 backends = ["codex"]
 prompts = [
-  { name = "n+1", prompt = "Find N+1 queries..." },
+  { name = "errors", prompt = "Find error handling issues..." },
 ]
-```
-
-## Workflows
-
-Workflows live in `.lok/workflows/` (project) or `~/.config/lok/workflows/` (global).
-
-Features:
-- **Parallel execution** - steps without dependencies run simultaneously
-- `{{ steps.NAME.output }}` - interpolate previous output
-- `depends_on = ["step1", "step2"]` - execution order
-- `when = "..."` - conditional execution
-
-Example with parallel steps:
-```toml
-[[steps]]
-name = "bugs"
-backend = "codex"
-prompt = "Find bugs"
-
-[[steps]]
-name = "security"
-backend = "gemini"
-prompt = "Find security issues"
-
-# bugs and security run in parallel (no dependencies)
-# synthesize waits for both to complete
-
-[[steps]]
-name = "synthesize"
-depends_on = ["bugs", "security"]
-backend = "ollama"
-prompt = "Prioritize: {{ steps.bugs.output }} {{ steps.security.output }}"
 ```
 
 ## Commands
@@ -313,22 +203,18 @@ lok ask -b codex "prompt"     # Specific backend
 # Multi-agent modes
 lok debate "question"         # Backends debate each other
 lok spawn "task"              # Parallel subtask agents
-lok conduct "task"            # Fully autonomous orchestration
+lok conduct "task"            # Fully autonomous
 
 # Code review
 lok diff                      # Review staged changes
-lok diff main..HEAD           # Review branch diff
 lok pr 123                    # Review GitHub PR
-lok ci 123                    # Analyze CI failures for PR
+lok ci 123                    # Analyze CI failures
 
 # Issue analysis
 lok fix 123                   # Analyze GitHub issue
 
 # Codebase analysis
-lok explain                   # Explain codebase structure
-lok explain --focus auth      # Focus on specific aspect
-
-# Predefined tasks
+lok explain                   # Explain codebase
 lok hunt .                    # Bug hunt
 lok audit .                   # Security audit
 
@@ -343,36 +229,13 @@ lok doctor                    # Check installation
 lok init                      # Create config file
 ```
 
-## Architecture
-
-```
-                         ┌─────────────┐
-                         │  CONDUCTOR  │
-                         │  (or user)  │
-                         └──────┬──────┘
-                                │
-        ┌───────────────────────┼───────────────────────┐
-        │                       │                       │
-        ▼                       ▼                       ▼
-┌───────────────┐       ┌───────────────┐       ┌───────────────┐
-│    CODEX      │       │    GEMINI     │       │    OLLAMA     │
-│    (scout)    │       │    (tank)     │       │   (support)   │
-│  Fast scans   │       │  Deep dives   │       │  Synthesis    │
-└───────────────┘       └───────────────┘       └───────────────┘
-```
-
-Think of it like an RPG party:
-- **Scout** (Codex): Fast, finds obvious issues
-- **Tank** (Gemini): Thorough, investigates deeply
-- **Support** (Ollama): Always available, synthesizes results
-
 ## Why "Lok"?
 
-1. **Swedish/German**: Short for "lokomotiv" (locomotive). The conductor sends
-   trained models down the tracks.
+Swedish/German: Short for "lokomotiv" (locomotive). The conductor sends trained
+models down the tracks.
 
-2. **Sanskrit/Hindi**: "lok" means "world" or "people", as in "Lok Sabha"
-   (People's Assembly). Multiple agents working as a collective.
+Sanskrit/Hindi: "lok" means "world" or "people", as in "Lok Sabha" (People's
+Assembly). Multiple agents working as a collective.
 
 ## License
 

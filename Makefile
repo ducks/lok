@@ -46,7 +46,7 @@ version-bump:
 	@echo "Version bumped to $(VERSION)"
 	@echo "Commit created"
 
-# Merge to main, tag, and push to trigger GitHub Actions release
+# Merge to main, tag, push, and publish to crates.io
 release: version-bump
 	@echo "Merging into main..."
 	@git checkout main
@@ -56,11 +56,14 @@ release: version-bump
 	@echo "Pushing to origin..."
 	@git push origin main
 	@git push origin v$(VERSION)
+	@echo "Publishing to crates.io..."
+	@cargo publish
 	@echo ""
-	@echo "Merged release/v$(VERSION) into main"
-	@echo "Created tag v$(VERSION) on main"
-	@echo "Pushed main and tag v$(VERSION)"
-	@echo "GitHub Actions will build release binaries"
+	@echo "Released v$(VERSION)"
+	@echo "  - Merged release/v$(VERSION) into main"
+	@echo "  - Tagged v$(VERSION)"
+	@echo "  - Pushed to GitHub"
+	@echo "  - Published to crates.io"
 
 # Build release binary
 build:
