@@ -84,34 +84,11 @@ Be specific and actionable. Output a clear plan for addressing each review point
 """
 
 [[steps]]
-name = "propose_gemini"
-backend = "gemini"
-depends_on = ["fetch-diff", "fetch-comments", "fetch-reviews"]
-prompt = """
-You need to rework PR #{{ arg.1 }}: {{ steps.fetch-pr.title }}
-
-## Current Code (the diff that needs fixing)
-{{ steps.fetch-diff.output }}
-
-## Review Comments
-{{ steps.fetch-comments.output }}
-
-## Review Feedback
-{{ steps.fetch-reviews.output }}
-
-Based on the review feedback, propose specific fixes. For each issue raised:
-1. What exact code change is needed?
-2. What file and approximate location?
-
-Be specific and actionable. Output a clear plan for addressing each review point.
-"""
-
-[[steps]]
 name = "debate"
 backend = "claude"
-depends_on = ["propose_claude", "propose_codex", "propose_gemini"]
+depends_on = ["propose_claude", "propose_codex"]
 prompt = """
-Three backends proposed fixes for the review feedback on PR #{{ arg.1 }}.
+Two backends proposed fixes for the review feedback on PR #{{ arg.1 }}.
 
 CLAUDE's proposal:
 {{ steps.propose_claude.output }}
@@ -119,11 +96,8 @@ CLAUDE's proposal:
 CODEX's proposal:
 {{ steps.propose_codex.output }}
 
-GEMINI's proposal:
-{{ steps.propose_gemini.output }}
-
 Synthesize their proposals:
-1. What fixes do they all agree on?
+1. What fixes do they agree on?
 2. Where do they differ? Which approach is better?
 3. What's the final consensus fix plan?
 
@@ -180,7 +154,7 @@ depends_on = ["push"]
 shell = """
 gh pr comment {{ arg.1 }} --body '## Rework Applied
 
-Addressed review feedback with consensus from Claude + Codex + Gemini.
+Addressed review feedback with consensus from Claude + Codex.
 
 **Changes:** {{ steps.fix.summary }}
 
