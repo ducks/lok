@@ -99,17 +99,20 @@ Analyze the reviews:
 Output JSON:
 {
   "verdict": "APPROVE or NEEDS_WORK or REQUEST_CHANGES",
-  "critical": "bullet list of critical issues or None",
-  "important": "bullet list of important issues or None",
-  "minor": "bullet list of minor issues or None",
+  "critical": "None OR bullet points as plain text with dashes",
+  "important": "None OR bullet points as plain text with dashes",
+  "minor": "None OR bullet points as plain text with dashes",
   "summary": "2-3 sentence summary of the review",
   "followups": [
     {"title": "Short issue title", "body": "Description of what needs to be done and where"}
   ]
 }
 
-For followups: Only include if BOTH reviewers identified incomplete work (same pattern in other files).
-If no followups needed, use empty array: "followups": []
+IMPORTANT formatting rules:
+- For critical/important/minor: Use plain text with dashes for bullets, NOT JSON arrays
+- Example: "- Issue one\n- Issue two" NOT ["Issue one", "Issue two"]
+- For followups: Only include if BOTH reviewers identified incomplete work
+- If no followups needed, use empty array: "followups": []
 Output only the JSON.
 """
 
@@ -143,13 +146,16 @@ Based on this review synthesis, create GitHub issues for any follow-up work need
 Synthesis:
 {{ steps.synthesize.output }}
 
-If there are followups in the JSON, output shell commands to create them:
-
-gh issue create --title "TITLE" --body "BODY" --label bug
-
+If there are followups in the JSON, output shell commands to create them.
 If no followups needed, output: echo "No follow-up issues needed"
 
-Output ONLY the shell commands, nothing else.
+IMPORTANT:
+- Output ONLY raw shell commands, NO markdown, NO code blocks, NO backticks
+- Use single quotes for the --body to avoid escaping issues
+- One command per followup
+
+Example format:
+gh issue create --title "Title here" --body 'Body here' --label bug
 """
 
 [[steps]]
