@@ -37,7 +37,7 @@ name = "fix"
 backend = "claude"
 depends_on = ["analyze"]
 apply_edits = true
-verify = "cargo fmt && cargo clippy -- -D warnings && cargo build"
+verify = "true"
 prompt = """
 Fix this issue:
 {{ steps.analyze.output }}

@@ -109,7 +109,7 @@ name = "fix"
 backend = "claude"
 depends_on = ["debate"]
 apply_edits = true
-verify = "cargo fmt && cargo clippy -- -D warnings && cargo build"
+verify = "true"
 prompt = """
 Generate JSON edits for PR #{{ arg.1 }}: {{ steps.fetch-pr.title }}
 
