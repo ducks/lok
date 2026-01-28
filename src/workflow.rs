@@ -542,10 +542,7 @@ impl WorkflowRunner {
 
             let replacement = results
                 .get(step_name)
-                .and_then(|r| {
-                    // Try to parse output as JSON and extract field
-                    extract_json_field(&r.output, field_name)
-                })
+                .and_then(|r| extract_json_field(&r.output, field_name))
                 .unwrap_or_else(|| format!("[field {} not found]", field_name));
 
             output = output.replace(full_match, &replacement);
@@ -604,11 +601,49 @@ fn extract_json_field(text: &str, field: &str) -> Option<String> {
     // Try to find JSON in the text (may be wrapped in ```json blocks)
     let json_str = extract_json_from_text(text)?;
 
-    let value: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+    // Try parsing, and if it fails due to control characters, sanitize and retry
+    let value: serde_json::Value = serde_json::from_str(&json_str)
+        .or_else(|_| {
+            // LLMs sometimes output literal newlines/tabs in JSON strings instead of \n\t escapes
+            // Sanitize by escaping control characters inside string values
+            let sanitized = sanitize_json_strings(&json_str);
+            serde_json::from_str(&sanitized)
+        })
+        .ok()?;
+
     value.get(field).map(|v| match v {
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
     })
+}
+
+/// Sanitize JSON by escaping control characters inside string values
+fn sanitize_json_strings(json: &str) -> String {
+    let mut result = String::with_capacity(json.len());
+    let mut in_string = false;
+    let mut chars = json.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '"' && !result.ends_with('\\') {
+            in_string = !in_string;
+            result.push(c);
+        } else if in_string && c.is_control() {
+            // Escape control characters inside strings
+            match c {
+                '\n' => result.push_str("\\n"),
+                '\r' => result.push_str("\\r"),
+                '\t' => result.push_str("\\t"),
+                _ => {
+                    // Other control chars: use unicode escape
+                    result.push_str(&format!("\\u{:04x}", c as u32));
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
 }
 
 /// Extract JSON object from text, handling markdown code blocks
@@ -881,4 +916,182 @@ pub fn format_results(results: &[StepResult]) -> String {
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_json_from_markdown_block() {
+        let text = r#"```json
+{
+  "verdict": "APPROVE",
+  "summary": "Looks good"
+}
+```"#;
+        let result = extract_json_from_text(text);
+        assert!(result.is_some());
+        let json = result.unwrap();
+        assert!(json.contains("\"verdict\": \"APPROVE\""));
+    }
+
+    #[test]
+    fn test_extract_json_from_plain_block() {
+        let text = r#"```
+{
+  "verdict": "APPROVE"
+}
+```"#;
+        let result = extract_json_from_text(text);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_extract_json_raw() {
+        let text = r#"{"verdict": "APPROVE", "summary": "test"}"#;
+        let result = extract_json_from_text(text);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("APPROVE"));
+    }
+
+    #[test]
+    fn test_extract_json_with_text_before() {
+        let text = r#"Here is the JSON:
+```json
+{"verdict": "APPROVE"}
+```"#;
+        let result = extract_json_from_text(text);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_extract_json_field_string() {
+        let text = r#"```json
+{"verdict": "APPROVE", "summary": "Looks good"}
+```"#;
+        let result = extract_json_field(text, "verdict");
+        assert_eq!(result, Some("APPROVE".to_string()));
+    }
+
+    #[test]
+    fn test_extract_json_field_multiline() {
+        let text = r#"```json
+{
+  "verdict": "REQUEST_CHANGES",
+  "critical": "None",
+  "important": "- First issue\n- Second issue",
+  "summary": "Needs work"
+}
+```"#;
+        assert_eq!(
+            extract_json_field(text, "verdict"),
+            Some("REQUEST_CHANGES".to_string())
+        );
+        assert_eq!(
+            extract_json_field(text, "critical"),
+            Some("None".to_string())
+        );
+        assert_eq!(
+            extract_json_field(text, "important"),
+            Some("- First issue\n- Second issue".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_json_field_not_found() {
+        let text = r#"{"verdict": "APPROVE"}"#;
+        let result = extract_json_field(text, "missing");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_json_field_number() {
+        let text = r#"{"count": 42}"#;
+        let result = extract_json_field(text, "count");
+        assert_eq!(result, Some("42".to_string()));
+    }
+
+    #[test]
+    fn test_extract_json_field_bool() {
+        let text = r#"{"approved": true}"#;
+        let result = extract_json_field(text, "approved");
+        assert_eq!(result, Some("true".to_string()));
+    }
+
+    #[test]
+    fn test_interpolate_with_fields_json() {
+        // Simulate the exact scenario from review-pr workflow
+        let synthesize_output = r#"```json
+{
+  "verdict": "REQUEST_CHANGES",
+  "critical": "None",
+  "important": "- Issue one\n- Issue two",
+  "minor": "- Minor thing",
+  "summary": "Needs work before merge."
+}
+```"#;
+
+        let mut results = HashMap::new();
+        results.insert(
+            "synthesize".to_string(),
+            StepResult {
+                name: "synthesize".to_string(),
+                output: synthesize_output.to_string(),
+                success: true,
+                elapsed_ms: 1000,
+            },
+        );
+
+        let config = Config::default();
+        let runner = WorkflowRunner::new(config, PathBuf::from("."), vec![]);
+
+        let template = "Verdict: {{ steps.synthesize.verdict }}\nSummary: {{ steps.synthesize.summary }}";
+        let result = runner.interpolate_with_fields(template, &results);
+
+        assert!(
+            result.contains("REQUEST_CHANGES"),
+            "Expected verdict in output, got: {}",
+            result
+        );
+        assert!(
+            result.contains("Needs work"),
+            "Expected summary in output, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_extract_json_with_literal_newlines() {
+        // LLMs sometimes output literal newlines in JSON strings instead of \n escapes
+        // This is invalid JSON but we should handle it gracefully
+        let text = "```json
+{
+  \"verdict\": \"APPROVE\",
+  \"important\": \"- First issue
+- Second issue
+- Third issue\"
+}
+```";
+        let result = extract_json_field(text, "verdict");
+        assert_eq!(result, Some("APPROVE".to_string()));
+
+        let important = extract_json_field(text, "important");
+        assert!(important.is_some());
+        assert!(important.unwrap().contains("First issue"));
+    }
+
+    #[test]
+    fn test_sanitize_json_strings() {
+        // Test that literal newlines inside strings are escaped
+        let input = r#"{"msg": "line1
+line2"}"#;
+        let sanitized = sanitize_json_strings(input);
+        assert!(sanitized.contains("\\n"));
+        assert!(!sanitized.contains('\n') || sanitized.matches('\n').count() == 0);
+
+        // Verify it parses after sanitization
+        let result: serde_json::Value = serde_json::from_str(&sanitized).unwrap();
+        assert_eq!(result["msg"], "line1\nline2");
+    }
 }
