@@ -789,8 +789,12 @@ fn load_workflow_with_depth(path: &Path, depth: usize) -> Result<Workflow> {
 
     // Handle extends inheritance
     if let Some(ref parent_name) = workflow.extends {
-        let parent_path = find_workflow(parent_name)
-            .with_context(|| format!("Failed to find parent workflow '{}' for extends", parent_name))?;
+        let parent_path = find_workflow(parent_name).with_context(|| {
+            format!(
+                "Failed to find parent workflow '{}' for extends",
+                parent_name
+            )
+        })?;
 
         let parent = load_workflow_with_depth(&parent_path, depth + 1)?;
         workflow = merge_workflows(parent, workflow);

@@ -558,7 +558,12 @@ async fn main() -> Result<()> {
             println!("{}", result);
         }
         Commands::Workflow(subcmd) => match subcmd {
-            WorkflowCommands::Run { name, dir, output, args } => {
+            WorkflowCommands::Run {
+                name,
+                dir,
+                output,
+                args,
+            } => {
                 run_workflow(&name, &dir, output.as_deref(), args, &config).await?;
             }
             WorkflowCommands::List => {
@@ -568,7 +573,12 @@ async fn main() -> Result<()> {
                 validate_workflow(&path)?;
             }
         },
-        Commands::Run { name, dir, output, args } => {
+        Commands::Run {
+            name,
+            dir,
+            output,
+            args,
+        } => {
             // Shorthand for 'workflow run'
             run_workflow(&name, &dir, output.as_deref(), args, &config).await?;
         }
