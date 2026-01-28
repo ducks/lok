@@ -156,7 +156,7 @@ name = "fix"
 backend = "claude"
 depends_on = ["debate"]
 apply_edits = true
-verify = "cargo fmt && cargo build"
+verify = "cargo fmt && cargo clippy -- -D warnings && cargo build"
 prompt = """
 Implement the consensus fix for Issue #{{ steps.pick.number }}: {{ steps.pick.title }}
 
