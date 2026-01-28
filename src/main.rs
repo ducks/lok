@@ -308,7 +308,7 @@ async fn main() -> Result<()> {
 
             let backend_names: Vec<String> =
                 backends.iter().map(|b| b.name().to_string()).collect();
-            let cwd = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+            let cwd = dir.canonicalize().with_context(|| format!("Failed to resolve directory: {}", dir.display()))?;
             let cwd_str = cwd.to_string_lossy().to_string();
 
             // Check cache first (unless --no-cache)
@@ -825,7 +825,7 @@ async fn run_workflow(
     let path = workflow::find_workflow(name)?;
     let wf = workflow::load_workflow(&path)?;
 
-    let cwd = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let cwd = dir.canonicalize().with_context(|| format!("Failed to resolve directory: {}", dir.display()))?;
     let runner = workflow::WorkflowRunner::new(config.clone(), cwd, args);
 
     let results = runner.run(&wf).await?;
@@ -1172,7 +1172,7 @@ async fn run_explain(
     println!("{}", "Lok Explain".cyan().bold());
     println!("{}", "=".repeat(50).dimmed());
 
-    let cwd = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let cwd = dir.canonicalize().with_context(|| format!("Failed to resolve directory: {}", dir.display()))?;
     println!("Analyzing: {}", cwd.display().to_string().yellow());
     println!();
 
