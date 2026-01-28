@@ -202,6 +202,10 @@ enum Commands {
         #[arg(short, long, default_value = ".")]
         dir: PathBuf,
 
+        /// Write full output to file instead of stdout
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
         /// Positional arguments for the workflow (accessible as {{ arg.1 }}, {{ arg.2 }}, etc.)
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
@@ -273,6 +277,10 @@ enum WorkflowCommands {
         /// Working directory
         #[arg(short, long, default_value = ".")]
         dir: PathBuf,
+
+        /// Write full output to file instead of stdout
+        #[arg(short, long)]
+        output: Option<PathBuf>,
 
         /// Positional arguments for the workflow (accessible as {{ arg.1 }}, {{ arg.2 }}, etc.)
         #[arg(trailing_var_arg = true)]
@@ -548,8 +556,8 @@ async fn main() -> Result<()> {
             println!("{}", result);
         }
         Commands::Workflow(subcmd) => match subcmd {
-            WorkflowCommands::Run { name, dir, args } => {
-                run_workflow(&name, &dir, args, &config).await?;
+            WorkflowCommands::Run { name, dir, output, args } => {
+                run_workflow(&name, &dir, output.as_deref(), args, &config).await?;
             }
             WorkflowCommands::List => {
                 list_workflows()?;
@@ -558,9 +566,9 @@ async fn main() -> Result<()> {
                 validate_workflow(&path)?;
             }
         },
-        Commands::Run { name, dir, args } => {
+        Commands::Run { name, dir, output, args } => {
             // Shorthand for 'workflow run'
-            run_workflow(&name, &dir, args, &config).await?;
+            run_workflow(&name, &dir, output.as_deref(), args, &config).await?;
         }
         Commands::Context { dir } => {
             show_context(&dir);
@@ -819,6 +827,7 @@ fn show_context(dir: &Path) {
 async fn run_workflow(
     name: &str,
     dir: &Path,
+    output: Option<&Path>,
     args: Vec<String>,
     config: &config::Config,
 ) -> Result<()> {
@@ -829,7 +838,20 @@ async fn run_workflow(
     let runner = workflow::WorkflowRunner::new(config.clone(), cwd, args);
 
     let results = runner.run(&wf).await?;
-    workflow::print_results(&results);
+
+    if let Some(output_path) = output {
+        // Write full results to file
+        let output_str = workflow::format_results(&results);
+        std::fs::write(output_path, &output_str)
+            .with_context(|| format!("Failed to write output to {}", output_path.display()))?;
+        println!(
+            "{} Results written to {}",
+            "✓".green(),
+            output_path.display()
+        );
+    } else {
+        workflow::print_results(&results);
+    }
 
     Ok(())
 }
