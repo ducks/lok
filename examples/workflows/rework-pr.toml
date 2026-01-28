@@ -1,0 +1,187 @@
+# Rework a PR based on review feedback
+#
+# Usage:
+#   lok run rework-pr 31
+#
+# This workflow:
+# 1. Checks out the PR branch
+# 2. Fetches review comments and current diff
+# 3. Gets fix proposals from multiple backends
+# 4. Synthesizes consensus fix
+# 5. Applies fixes, commits, and pushes to update the PR
+
+name = "rework-pr"
+description = "Rework a PR based on review feedback"
+
+[[steps]]
+name = "fetch-pr"
+shell = "gh pr view {{ arg.1 }} --json number,title,body,headRefName,baseRefName"
+
+[[steps]]
+name = "checkout"
+depends_on = ["fetch-pr"]
+shell = "git fetch origin {{ steps.fetch-pr.headRefName }} && git checkout {{ steps.fetch-pr.headRefName }}"
+
+[[steps]]
+name = "fetch-diff"
+depends_on = ["checkout"]
+shell = "gh pr diff {{ arg.1 }}"
+
+[[steps]]
+name = "fetch-comments"
+depends_on = ["checkout"]
+shell = "gh pr view {{ arg.1 }} --json comments --jq '.comments[].body'"
+
+[[steps]]
+name = "fetch-reviews"
+depends_on = ["checkout"]
+shell = "gh api repos/{owner}/{repo}/pulls/{{ arg.1 }}/reviews --jq '.[].body'"
+
+[[steps]]
+name = "propose_claude"
+backend = "claude"
+depends_on = ["fetch-diff", "fetch-comments", "fetch-reviews"]
+prompt = """
+You need to rework PR #{{ arg.1 }}: {{ steps.fetch-pr.title }}
+
+## Current Code (the diff that needs fixing)
+{{ steps.fetch-diff.output }}
+
+## Review Comments
+{{ steps.fetch-comments.output }}
+
+## Review Feedback
+{{ steps.fetch-reviews.output }}
+
+Based on the review feedback, propose specific fixes. For each issue raised:
+1. What exact code change is needed?
+2. What file and approximate location?
+
+Be specific and actionable. Output a clear plan for addressing each review point.
+"""
+
+[[steps]]
+name = "propose_codex"
+backend = "codex"
+depends_on = ["fetch-diff", "fetch-comments", "fetch-reviews"]
+prompt = """
+You need to rework PR #{{ arg.1 }}: {{ steps.fetch-pr.title }}
+
+## Current Code (the diff that needs fixing)
+{{ steps.fetch-diff.output }}
+
+## Review Comments
+{{ steps.fetch-comments.output }}
+
+## Review Feedback
+{{ steps.fetch-reviews.output }}
+
+Based on the review feedback, propose specific fixes. For each issue raised:
+1. What exact code change is needed?
+2. What file and approximate location?
+
+Be specific and actionable. Output a clear plan for addressing each review point.
+"""
+
+[[steps]]
+name = "propose_gemini"
+backend = "gemini"
+depends_on = ["fetch-diff", "fetch-comments", "fetch-reviews"]
+prompt = """
+You need to rework PR #{{ arg.1 }}: {{ steps.fetch-pr.title }}
+
+## Current Code (the diff that needs fixing)
+{{ steps.fetch-diff.output }}
+
+## Review Comments
+{{ steps.fetch-comments.output }}
+
+## Review Feedback
+{{ steps.fetch-reviews.output }}
+
+Based on the review feedback, propose specific fixes. For each issue raised:
+1. What exact code change is needed?
+2. What file and approximate location?
+
+Be specific and actionable. Output a clear plan for addressing each review point.
+"""
+
+[[steps]]
+name = "debate"
+backend = "claude"
+depends_on = ["propose_claude", "propose_codex", "propose_gemini"]
+prompt = """
+Three backends proposed fixes for the review feedback on PR #{{ arg.1 }}.
+
+CLAUDE's proposal:
+{{ steps.propose_claude.output }}
+
+CODEX's proposal:
+{{ steps.propose_codex.output }}
+
+GEMINI's proposal:
+{{ steps.propose_gemini.output }}
+
+Synthesize their proposals:
+1. What fixes do they all agree on?
+2. Where do they differ? Which approach is better?
+3. What's the final consensus fix plan?
+
+Output a clear, specific plan that addresses ALL the review feedback.
+"""
+
+[[steps]]
+name = "fix"
+backend = "claude"
+depends_on = ["debate"]
+apply_edits = true
+verify = "cargo fmt && cargo build"
+prompt = """
+Implement the consensus fixes for PR #{{ arg.1 }}: {{ steps.fetch-pr.title }}
+
+The review feedback and debate concluded with this approach:
+{{ steps.debate.output }}
+
+Now generate the actual code edits.
+
+Output JSON:
+{
+  "edits": [{"file": "path/to/file.rs", "old": "exact text to replace", "new": "replacement text"}],
+  "summary": "one-line description of the rework"
+}
+
+IMPORTANT:
+- "old" must match EXACTLY (including whitespace)
+- Address ALL review feedback points
+- Keep edits minimal and focused
+"""
+
+[[steps]]
+name = "commit"
+depends_on = ["fix"]
+shell = """
+git add -A && git commit -m "address review feedback: {{ steps.fix.summary }}
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+"""
+
+[[steps]]
+name = "push"
+depends_on = ["commit"]
+shell = "git push origin HEAD"
+
+[[steps]]
+name = "comment"
+depends_on = ["push"]
+shell = """
+gh pr comment {{ arg.1 }} --body '## Rework Applied
+
+Addressed review feedback with consensus from Claude + Codex + Gemini.
+
+**Changes:** {{ steps.fix.summary }}
+
+Ready for re-review.
+
+---
+*Automated rework by lok rework-pr workflow*'
+"""
