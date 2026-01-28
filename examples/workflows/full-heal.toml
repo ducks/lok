@@ -1,0 +1,161 @@
+# Full autonomous healing loop
+#
+# Usage:
+#   lok run full-heal
+#
+# This workflow:
+# 1. Hunts for bugs in the codebase
+# 2. Picks the highest priority fixable issue
+# 3. Generates and applies a fix
+# 4. Commits and pushes to a branch
+# 5. Creates a PR
+# 6. Reviews the PR with another backend
+# 7. Merges if approved
+
+name = "full-heal"
+description = "Hunt, fix, review, merge - fully autonomous"
+
+[[steps]]
+name = "hunt"
+backend = "codex"
+prompt = """
+Analyze this codebase for bugs, error handling issues, and code problems.
+List the top 5 issues, ranked by severity.
+
+For each issue output:
+ISSUE: <severity:high|medium|low> | <file:line> | <description>
+
+Example:
+ISSUE: high | backend/index.js:14 | fs.mkdirSync has no error handling, will crash on permission denied
+
+Focus on real bugs, not style preferences. Be specific about file and line.
+"""
+
+[[steps]]
+name = "pick"
+backend = "claude"
+depends_on = ["hunt"]
+prompt = """
+From these issues found in the codebase:
+
+{{ steps.hunt.output }}
+
+Pick the ONE issue that:
+1. Is highest severity
+2. Can be fixed with a simple, safe edit
+3. Won't break other functionality
+
+Output JSON:
+{
+  "file": "path/to/file",
+  "line": 42,
+  "issue": "description of the problem",
+  "severity": "high"
+}
+
+Pick only ONE issue. Output only the JSON.
+"""
+
+[[steps]]
+name = "issue"
+shell = """
+gh issue create \
+  --title '{{ steps.pick.issue }}' \
+  --body 'Severity: {{ steps.pick.severity }}
+File: {{ steps.pick.file }}:{{ steps.pick.line }}
+
+Found by lok hunt.'
+"""
+depends_on = ["pick"]
+
+[[steps]]
+name = "fix"
+backend = "claude"
+depends_on = ["issue"]
+apply_edits = true
+prompt = """
+Fix this issue:
+{{ steps.pick.output }}
+
+Output JSON with:
+1. "edits": array of {file, old, new} for exact text replacements
+2. "summary": one-line commit message
+
+Example:
+{
+  "edits": [{"file": "index.js", "old": "fs.mkdirSync(dir)", "new": "fs.mkdirSync(dir, { recursive: true })"}],
+  "summary": "add error handling to mkdirSync"
+}
+
+IMPORTANT:
+- "old" must match EXACTLY (including whitespace)
+- Keep edits minimal
+- Make the fix correct and safe
+"""
+
+[[steps]]
+name = "branch"
+shell = "git checkout -b fix/auto-heal-$(date +%s)"
+depends_on = ["fix"]
+
+[[steps]]
+name = "commit"
+shell = "git add -A && git commit -m 'fix: {{ steps.fix.summary }}'"
+depends_on = ["branch"]
+
+[[steps]]
+name = "push"
+shell = "git push -u origin HEAD 2>&1"
+depends_on = ["commit"]
+
+[[steps]]
+name = "pr"
+shell = """
+gh pr create \
+  --title 'fix: {{ steps.fix.summary }}' \
+  --body '## Issue
+{{ steps.pick.issue }}
+
+Created: {{ steps.issue.output }}
+
+## Fix
+{{ steps.fix.summary }}
+
+---
+Automated fix by lok full-heal workflow.'
+"""
+depends_on = ["push"]
+
+[[steps]]
+name = "review"
+backend = "claude"
+depends_on = ["pr", "fix"]
+prompt = """
+Review this code change:
+
+Issue that was fixed:
+{{ steps.pick.output }}
+
+Fix that was applied:
+{{ steps.fix.output }}
+
+Check for:
+1. Correctness - does the fix actually solve the issue?
+2. Safety - could it break anything else?
+3. Completeness - are there similar issues that should be fixed?
+
+Output JSON:
+{
+  "approved": true or false,
+  "verdict": "APPROVE or REQUEST_CHANGES",
+  "reason": "explanation"
+}
+
+Be critical. Only approve if the fix is genuinely correct and safe.
+"""
+
+[[steps]]
+name = "merge"
+shell = "gh pr merge --rebase --delete-branch"
+depends_on = ["review"]
+when = "steps.review.output contains '\"approved\": true'"
