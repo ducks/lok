@@ -183,13 +183,12 @@ Closes #{{ steps.pick.number }}: {{ steps.pick.title }}
 ## Why this issue?
 {{ steps.pick.reason }}
 
-## Consensus approach
-{{ steps.debate.output }}
-
 ## Fix
 {{ steps.fix.summary }}
 
+This fix was developed through Claude + Codex consensus.
+
 ---
-Automated fix by lok pick-and-fix workflow (Claude + Codex consensus).'
+Automated fix by lok pick-and-fix workflow.'
 """
 depends_on = ["push"]
