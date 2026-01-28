@@ -36,7 +36,9 @@ impl Spawn {
     pub fn new(config: &Config, cwd: &Path) -> Result<Self> {
         Ok(Self {
             config: config.clone(),
-            cwd: cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
+            cwd: cwd
+                .canonicalize()
+                .with_context(|| format!("Directory not found: {}", cwd.display()))?,
             delegator: Delegator::new(),
         })
     }

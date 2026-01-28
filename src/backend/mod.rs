@@ -117,7 +117,9 @@ pub async fn run_query_with_config(
     cwd: &Path,
     config: &Config,
 ) -> Result<Vec<QueryResult>> {
-    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let cwd = cwd
+        .canonicalize()
+        .with_context(|| format!("Directory not found: {}", cwd.display()))?;
     let default_timeout = config.defaults.timeout;
     let parallel = config.defaults.parallel;
 

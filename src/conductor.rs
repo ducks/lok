@@ -198,7 +198,9 @@ Always explain your reasoning briefly before making tool calls."#,
     }
 
     pub async fn conduct(&self, task: &str, cwd: &Path) -> Result<String> {
-        let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+        let cwd = cwd
+            .canonicalize()
+            .with_context(|| format!("Directory not found: {}", cwd.display()))?;
 
         println!("{}", "Conductor starting...".cyan().bold());
         println!("Task: {}", task);
