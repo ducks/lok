@@ -1427,16 +1427,31 @@ fn parse_pr_identifier(pr: &str, repo: Option<&str>) -> Result<(String, String)>
     // Handle URL format
     if pr.starts_with("http") {
         // Extract from URL like https://github.com/owner/repo/pull/123
+        // Split: ["https:", "", "github.com", "owner", "repo", "pull", "123"]
         let parts: Vec<&str> = pr.split('/').collect();
-        if parts.len() >= 5 {
-            let owner_repo = format!("{}/{}", parts[parts.len() - 4], parts[parts.len() - 3]);
-            // Return the number part (might have query params)
-            let number = parts[parts.len() - 1]
-                .split('?')
-                .next()
-                .unwrap_or(parts[parts.len() - 1]);
-            return Ok((owner_repo, number.to_string()));
+
+        // Validate: need at least 7 segments and /pull/ or /pulls/ in correct position
+        if parts.len() >= 7 {
+            let pull_segment = parts[parts.len() - 2];
+            if pull_segment == "pull" || pull_segment == "pulls" {
+                // Validate host is github.com or gitlab.com (not some random URL)
+                let host = parts.get(2).unwrap_or(&"");
+                if host.contains("github.com") || host.contains("gitlab.com") {
+                    let owner_repo =
+                        format!("{}/{}", parts[parts.len() - 4], parts[parts.len() - 3]);
+                    // Return the number part (might have query params)
+                    let number = parts[parts.len() - 1]
+                        .split('?')
+                        .next()
+                        .unwrap_or(parts[parts.len() - 1]);
+                    return Ok((owner_repo, number.to_string()));
+                }
+            }
         }
+        // Invalid PR URL format - return error instead of silent fallthrough
+        return Err(anyhow::anyhow!(
+            "Invalid PR URL format. Expected: https://github.com/owner/repo/pull/123"
+        ));
     }
 
     // If repo is provided, use it
