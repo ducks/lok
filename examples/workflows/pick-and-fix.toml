@@ -87,9 +87,11 @@ depends_on = ["fix"]
 
 [[steps]]
 name = "commit"
-shell = "git add -A && git commit -m 'fix: {{ steps.fix.summary }}
+shell = """
+git add -A && git commit -m "fix: {{ steps.fix.summary }}
 
-Closes #{{ steps.pick.number }}'"
+Closes #{{ steps.pick.number }}"
+"""
 depends_on = ["branch"]
 
 [[steps]]
