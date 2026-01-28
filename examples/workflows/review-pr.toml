@@ -185,7 +185,7 @@ DO NOT:
 DO:
 - Output raw gh commands directly
 - Use single quotes for --body content
-- Escape any single quotes in body with '\''
+- Avoid single quotes in the body text itself
 
 CORRECT OUTPUT EXAMPLE:
 gh issue create --title "Fix X" --body 'Description here' --label bug
