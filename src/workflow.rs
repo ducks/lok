@@ -68,6 +68,9 @@ pub struct Workflow {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
+    /// Extend another workflow by name (inherits steps, can override by name)
+    #[serde(default)]
+    pub extends: Option<String>,
     #[serde(default)]
     pub steps: Vec<Step>,
 }
@@ -767,40 +770,87 @@ fn load_workflows_from_dir(dir: &Path) -> Result<Vec<(PathBuf, Workflow)>> {
     Ok(workflows)
 }
 
-/// Load a workflow from a TOML file
+/// Load a workflow from a TOML file, resolving any `extends` inheritance
 pub fn load_workflow(path: &Path) -> Result<Workflow> {
+    load_workflow_with_depth(path, 0)
+}
+
+/// Load workflow with recursion depth tracking to prevent infinite loops
+fn load_workflow_with_depth(path: &Path, depth: usize) -> Result<Workflow> {
+    if depth > 10 {
+        anyhow::bail!("Workflow inheritance depth exceeded (max 10) - possible circular extends");
+    }
+
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read workflow file: {}", path.display()))?;
 
-    toml::from_str(&content)
-        .with_context(|| format!("Failed to parse workflow: {}", path.display()))
+    let mut workflow: Workflow = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse workflow: {}", path.display()))?;
+
+    // Handle extends inheritance
+    if let Some(ref parent_name) = workflow.extends {
+        let parent_path = find_workflow(parent_name)
+            .with_context(|| format!("Failed to find parent workflow '{}' for extends", parent_name))?;
+
+        let parent = load_workflow_with_depth(&parent_path, depth + 1)?;
+        workflow = merge_workflows(parent, workflow);
+    }
+
+    Ok(workflow)
+}
+
+/// Merge parent workflow with child workflow
+/// - Child steps override parent steps with same name
+/// - Child steps are appended after parent steps (unless overriding)
+/// - Child name/description take precedence if set
+fn merge_workflows(parent: Workflow, child: Workflow) -> Workflow {
+    let mut merged_steps = parent.steps.clone();
+
+    for child_step in child.steps {
+        // Check if this step overrides a parent step
+        if let Some(pos) = merged_steps.iter().position(|s| s.name == child_step.name) {
+            // Override parent step
+            merged_steps[pos] = child_step;
+        } else {
+            // Append new step
+            merged_steps.push(child_step);
+        }
+    }
+
+    Workflow {
+        name: child.name,
+        description: child.description.or(parent.description),
+        extends: None, // Clear extends after merging
+        steps: merged_steps,
+    }
 }
 
 /// Print workflow results
 pub fn print_results(results: &[StepResult]) {
-    println!();
-    println!("{}", "Results:".bold());
-    println!();
+    print!("{}", format_results(results));
+}
+
+/// Format workflow results as a string (for file output)
+pub fn format_results(results: &[StepResult]) -> String {
+    let mut output = String::new();
+    output.push_str("\nResults:\n\n");
 
     for result in results {
-        let status = if result.success {
-            format!("[{}]", "OK".green())
-        } else {
-            format!("[{}]", "FAIL".red())
-        };
+        let status = if result.success { "[OK]" } else { "[FAIL]" };
 
-        println!(
-            "{} {} ({:.1}s)",
+        output.push_str(&format!(
+            "{} {} ({:.1}s)\n\n",
             status,
-            result.name.bold(),
+            result.name,
             result.elapsed_ms as f64 / 1000.0
-        );
-        println!();
+        ));
 
         // Indent output
         for line in result.output.lines() {
-            println!("  {}", line);
+            output.push_str(&format!("  {}\n", line));
         }
-        println!();
+        output.push('\n');
     }
+
+    output
 }
