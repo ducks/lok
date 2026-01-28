@@ -1425,32 +1425,72 @@ fn parse_pr_identifier(pr: &str, repo: Option<&str>) -> Result<(String, String)>
     }
 
     // Handle URL format
-    if pr.starts_with("http") {
-        // Extract from URL like https://github.com/owner/repo/pull/123
-        // Split: ["https:", "", "github.com", "owner", "repo", "pull", "123"]
-        let parts: Vec<&str> = pr.split('/').collect();
+    if pr.starts_with("http://") || pr.starts_with("https://") {
+        // Strip query params and fragments
+        let url_clean = pr.split(['?', '#']).next().unwrap_or(pr);
 
-        // Validate: need at least 7 segments and /pull/ or /pulls/ in correct position
-        if parts.len() >= 7 {
-            let pull_segment = parts[parts.len() - 2];
-            if pull_segment == "pull" || pull_segment == "pulls" {
-                // Validate host is github.com or gitlab.com (not some random URL)
-                let host = parts.get(2).unwrap_or(&"");
-                if host.contains("github.com") || host.contains("gitlab.com") {
-                    let owner_repo =
-                        format!("{}/{}", parts[parts.len() - 4], parts[parts.len() - 3]);
-                    // Return the number part (might have query params)
-                    let number = parts[parts.len() - 1]
-                        .split('?')
-                        .next()
-                        .unwrap_or(parts[parts.len() - 1]);
-                    return Ok((owner_repo, number.to_string()));
+        // Split and filter empty segments (handles trailing slashes)
+        let parts: Vec<&str> = url_clean.split('/').filter(|s| !s.is_empty()).collect();
+
+        // Validate host - exact match for security (no .contains() which allows github.com.evil.com)
+        let host = parts.get(1).map(|s| *s).unwrap_or("");
+        let is_github = host == "github.com";
+        let is_gitlab = host == "gitlab.com" || host.contains("gitlab.");
+
+        if !is_github && !is_gitlab {
+            return Err(anyhow::anyhow!(
+                "Invalid PR URL host '{}'. Expected github.com or gitlab.com",
+                host
+            ));
+        }
+
+        // GitHub: https://github.com/owner/repo/pull/123[/files]
+        // Parts after filter: ["https:", "github.com", "owner", "repo", "pull", "123"]
+        if is_github {
+            if let Some(pull_pos) = parts.iter().position(|&s| s == "pull" || s == "pulls") {
+                if pull_pos >= 4 && pull_pos + 1 < parts.len() {
+                    let owner = parts[pull_pos - 2];
+                    let repo = parts[pull_pos - 1];
+                    let number_str = parts[pull_pos + 1];
+
+                    // Validate PR number is numeric
+                    if number_str.parse::<u64>().is_err() {
+                        return Err(anyhow::anyhow!(
+                            "Invalid PR number: '{}' is not a valid number",
+                            number_str
+                        ));
+                    }
+
+                    return Ok((format!("{}/{}", owner, repo), number_str.to_string()));
                 }
             }
         }
-        // Invalid PR URL format - return error instead of silent fallthrough
+
+        // GitLab: https://gitlab.com/owner/repo/-/merge_requests/123[/diffs]
+        // Parts after filter: ["https:", "gitlab.com", "owner", "repo", "-", "merge_requests", "123"]
+        if is_gitlab {
+            if let Some(mr_pos) = parts.iter().position(|&s| s == "merge_requests") {
+                if mr_pos >= 5 && mr_pos + 1 < parts.len() {
+                    let owner = parts[mr_pos - 3];
+                    let repo = parts[mr_pos - 2];
+                    let number_str = parts[mr_pos + 1];
+
+                    // Validate MR number is numeric
+                    if number_str.parse::<u64>().is_err() {
+                        return Err(anyhow::anyhow!(
+                            "Invalid MR number: '{}' is not a valid number",
+                            number_str
+                        ));
+                    }
+
+                    return Ok((format!("{}/{}", owner, repo), number_str.to_string()));
+                }
+            }
+        }
+
+        // Invalid PR URL format - return error with both formats
         return Err(anyhow::anyhow!(
-            "Invalid PR URL format. Expected: https://github.com/owner/repo/pull/123"
+            "Invalid PR URL format. Expected:\n  GitHub: https://github.com/owner/repo/pull/123\n  GitLab: https://gitlab.com/owner/repo/-/merge_requests/123"
         ));
     }
 
