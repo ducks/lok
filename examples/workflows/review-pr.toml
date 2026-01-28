@@ -78,11 +78,39 @@ Be specific with file paths and line numbers.
 """
 
 [[steps]]
+name = "review_gemini"
+backend = "gemini"
+depends_on = ["fetch-meta", "fetch-diff"]
+prompt = """
+You are reviewing PR #{{ arg.1 }}.
+
+## PR Metadata
+{{ steps.fetch-meta.output }}
+
+## Code Changes
+{{ steps.fetch-diff.output }}
+
+Perform a thorough code review. Check for:
+1. Correctness - Does the code do what it claims?
+2. Bugs - Are there any logic errors, edge cases, or potential crashes?
+3. Security - Any security issues (injection, unsafe operations)?
+4. Completeness - Are there other locations that need the same fix?
+5. Style - Does it follow project conventions?
+
+Categorize findings as:
+- Critical: Will break production or has security issues
+- Important: Logic errors, incomplete fixes, missing edge cases
+- Minor: Style, naming, small improvements
+
+Be specific with file paths and line numbers.
+"""
+
+[[steps]]
 name = "synthesize"
 backend = "claude"
-depends_on = ["review_claude", "review_codex"]
+depends_on = ["review_claude", "review_codex", "review_gemini"]
 prompt = """
-Two backends reviewed PR #{{ arg.1 }}. Synthesize their findings into a consensus.
+Three backends reviewed PR #{{ arg.1 }}. Synthesize their findings into a consensus.
 
 CLAUDE review:
 {{ steps.review_claude.output }}
@@ -90,30 +118,27 @@ CLAUDE review:
 CODEX review:
 {{ steps.review_codex.output }}
 
-Analyze the reviews:
-1. What issues did BOTH find? (high confidence)
-2. What did only ONE find? (note which)
-3. Overall verdict?
-4. Are there follow-up issues needed? (e.g., same fix needed in other files)
+GEMINI review:
+{{ steps.review_gemini.output }}
 
-Output JSON:
+Analyze the reviews and output JSON. Here is the EXACT format to use:
+
 {
-  "verdict": "APPROVE or NEEDS_WORK or REQUEST_CHANGES",
-  "critical": "None OR bullet points as plain text with dashes",
-  "important": "None OR bullet points as plain text with dashes",
-  "minor": "None OR bullet points as plain text with dashes",
-  "summary": "2-3 sentence summary of the review",
-  "followups": [
-    {"title": "Short issue title", "body": "Description of what needs to be done and where"}
-  ]
+  "verdict": "APPROVE",
+  "critical": "None",
+  "important": "- First important issue\n- Second important issue",
+  "minor": "- First minor issue",
+  "summary": "Summary sentence here.",
+  "followups": []
 }
 
-IMPORTANT formatting rules:
-- For critical/important/minor: Use plain text with dashes for bullets, NOT JSON arrays
-- Example: "- Issue one\n- Issue two" NOT ["Issue one", "Issue two"]
-- For followups: Only include if BOTH reviewers identified incomplete work
-- If no followups needed, use empty array: "followups": []
-Output only the JSON.
+CRITICAL RULES:
+1. verdict must be exactly one of: APPROVE, NEEDS_WORK, REQUEST_CHANGES
+2. critical/important/minor must be STRINGS, not arrays
+3. Use "None" if no issues, or "- item one\n- item two" for multiple
+4. NEVER use ["item"] array syntax - always use string with dashes
+5. followups is an array only if BOTH reviewers found incomplete work
+6. Output ONLY the JSON, no markdown, no explanation
 """
 
 [[steps]]
@@ -147,15 +172,28 @@ Synthesis:
 {{ steps.synthesize.output }}
 
 If there are followups in the JSON, output shell commands to create them.
-If no followups needed, output: echo "No follow-up issues needed"
+If no followups needed, output exactly: echo "No follow-up issues needed"
 
-IMPORTANT:
-- Output ONLY raw shell commands, NO markdown, NO code blocks, NO backticks
-- Use single quotes for the --body to avoid escaping issues
-- One command per followup
+YOUR OUTPUT MUST BE RAW SHELL COMMANDS ONLY.
 
-Example format:
-gh issue create --title "Title here" --body 'Body here' --label bug
+DO NOT:
+- Wrap in ```bash or ``` code blocks
+- Add any markdown formatting
+- Add any explanation text
+- Use backticks anywhere
+
+DO:
+- Output raw gh commands directly
+- Use single quotes for --body content
+- Escape any single quotes in body with '\''
+
+CORRECT OUTPUT EXAMPLE:
+gh issue create --title "Fix X" --body 'Description here' --label bug
+
+WRONG OUTPUT (DO NOT DO THIS):
+```bash
+gh issue create --title "Fix X" --body 'Description'
+```
 """
 
 [[steps]]

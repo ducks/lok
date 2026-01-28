@@ -46,7 +46,7 @@ impl super::Backend for GeminiBackend {
     async fn query(&self, prompt: &str, cwd: &Path) -> Result<String> {
         let mut cmd = Command::new(&self.command);
         cmd.args(&self.args)
-            .arg("--") // Prevent prompt from being interpreted as flags
+            .arg("--prompt")
             .arg(prompt)
             .current_dir(cwd)
             .stdout(Stdio::piped())
