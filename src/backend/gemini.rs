@@ -44,10 +44,19 @@ impl super::Backend for GeminiBackend {
     }
 
     async fn query(&self, prompt: &str, cwd: &Path) -> Result<String> {
-        let mut cmd = Command::new(&self.command);
-        cmd.args(&self.args)
-            .arg("--prompt")
-            .arg(prompt)
+        // Gemini CLI requires stdin to be a pipe (not null/tty), so we use shell
+        // to pipe empty input: echo '' | npx @google/gemini-cli 'prompt'
+        let escaped_prompt = prompt.replace("'", "'\\''");
+        let shell_cmd = format!(
+            "echo '' | {} {} '{}'",
+            &self.command,
+            self.args.join(" "),
+            escaped_prompt
+        );
+
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
+            .arg(&shell_cmd)
             .current_dir(cwd)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
