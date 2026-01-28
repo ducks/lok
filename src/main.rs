@@ -1167,7 +1167,7 @@ async fn run_explain(
     config: &config::Config,
     verbose: bool,
 ) -> Result<()> {
-    use std::fs;
+    use tokio::fs;
 
     println!("{}", "Lok Explain".cyan().bold());
     println!("{}", "=".repeat(50).dimmed());
@@ -1184,7 +1184,7 @@ async fn run_explain(
     for readme in readme_variants {
         let path = cwd.join(readme);
         if path.exists() {
-            if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(content) = fs::read_to_string(&path).await {
                 let truncated = if content.len() > 3000 {
                     format!("{}...\n[truncated]", &content[..3000])
                 } else {
@@ -1210,7 +1210,7 @@ async fn run_explain(
     for (manifest, lang) in manifests {
         let path = cwd.join(manifest);
         if path.exists() {
-            if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(content) = fs::read_to_string(&path).await {
                 let truncated = if content.len() > 2000 {
                     format!("{}...\n[truncated]", &content[..2000])
                 } else {
@@ -1226,11 +1226,11 @@ async fn run_explain(
 
     // Build directory tree (top 2 levels)
     info.push_str("=== Directory Structure ===\n");
-    if let Ok(entries) = fs::read_dir(&cwd) {
+    if let Ok(mut entries) = fs::read_dir(&cwd).await {
         let mut dirs: Vec<String> = Vec::new();
         let mut files: Vec<String> = Vec::new();
 
-        for entry in entries.flatten() {
+        while let Ok(Some(entry)) = entries.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
             // Skip hidden files and common noise
             if name.starts_with('.')
@@ -1244,12 +1244,17 @@ async fn run_explain(
             if entry.path().is_dir() {
                 // List contents of subdirectory
                 let mut subentries = Vec::new();
-                if let Ok(subdir) = fs::read_dir(entry.path()) {
-                    for subentry in subdir.flatten().take(10) {
+                if let Ok(mut subdir) = fs::read_dir(entry.path()).await {
+                    let mut count = 0;
+                    while let Ok(Some(subentry)) = subdir.next_entry().await {
+                        if count >= 10 {
+                            break;
+                        }
                         let subname = subentry.file_name().to_string_lossy().to_string();
                         if !subname.starts_with('.') {
                             let suffix = if subentry.path().is_dir() { "/" } else { "" };
                             subentries.push(format!("{}{}", subname, suffix));
+                            count += 1;
                         }
                     }
                 }
