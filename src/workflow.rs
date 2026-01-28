@@ -828,13 +828,19 @@ fn load_workflow_with_depth(path: &Path, depth: usize) -> Result<Workflow> {
 fn merge_workflows(parent: Workflow, child: Workflow) -> Workflow {
     let mut merged_steps = parent.steps.clone();
 
+    // Build index map once for O(1) lookups of parent steps
+    let name_to_index: HashMap<String, usize> = merged_steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.name.clone(), i))
+        .collect();
+
     for child_step in child.steps {
-        // Check if this step overrides a parent step
-        if let Some(pos) = merged_steps.iter().position(|s| s.name == child_step.name) {
-            // Override parent step
+        if let Some(&pos) = name_to_index.get(&child_step.name) {
+            // Override existing parent step at same position
             merged_steps[pos] = child_step;
         } else {
-            // Append new step
+            // Append new step (no need to update map - we won't look it up)
             merged_steps.push(child_step);
         }
     }
