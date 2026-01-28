@@ -65,12 +65,17 @@ impl Team {
         );
         println!();
 
-        // Find the primary backend (guaranteed to exist now)
+        // Find the primary backend (guaranteed to exist by validation above)
         let primary_backend = self
             .backends
             .iter()
             .find(|b| b.name() == primary.name)
-            .unwrap();
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Internal error: backend '{}' passed validation but not found in backend list",
+                    primary.name
+                )
+            })?;
 
         // Query primary
         println!("{} Querying {}...", "→".cyan(), primary.name.to_uppercase());
