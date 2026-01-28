@@ -160,7 +160,7 @@ impl WorkflowRunner {
                     .steps
                     .iter()
                     .find(|s| &s.name == step_name)
-                    .unwrap();
+                    .ok_or_else(|| anyhow::anyhow!("Step '{}' not found in workflow", step_name))?;
 
                 // Check condition if present
                 if let Some(ref condition) = step.when {
@@ -402,11 +402,13 @@ impl WorkflowRunner {
     /// Group steps by depth level for parallel execution
     /// Depth 0 = no dependencies, Depth N = depends on steps at depth < N
     fn group_by_depth(&self, steps: &[Step]) -> Result<Vec<Vec<String>>> {
-        // First validate dependencies exist
-        let step_names: std::collections::HashSet<_> = steps.iter().map(|s| &s.name).collect();
+        // Build step lookup map for O(1) access instead of O(n) linear scans
+        let step_map: HashMap<&str, &Step> = steps.iter().map(|s| (s.name.as_str(), s)).collect();
+
+        // Validate dependencies exist
         for step in steps {
             for dep in &step.depends_on {
-                if !step_names.contains(dep) {
+                if !step_map.contains_key(dep.as_str()) {
                     anyhow::bail!("Step '{}' depends on unknown step '{}'", step.name, dep);
                 }
             }
@@ -415,9 +417,9 @@ impl WorkflowRunner {
         // Calculate depth for each step
         let mut depths: HashMap<String, usize> = HashMap::new();
 
-        fn calc_depth(
+        fn calc_depth<'a>(
             name: &str,
-            steps: &[Step],
+            step_map: &HashMap<&str, &'a Step>,
             depths: &mut HashMap<String, usize>,
             visiting: &mut std::collections::HashSet<String>,
         ) -> Result<usize> {
@@ -431,14 +433,16 @@ impl WorkflowRunner {
 
             visiting.insert(name.to_string());
 
-            let step = steps.iter().find(|s| s.name == name).unwrap();
+            let step = step_map
+                .get(name)
+                .ok_or_else(|| anyhow::anyhow!("Step '{}' not found in workflow", name))?;
             let depth = if step.depends_on.is_empty() {
                 0
             } else {
                 let max_dep_depth = step
                     .depends_on
                     .iter()
-                    .map(|dep| calc_depth(dep, steps, depths, visiting))
+                    .map(|dep| calc_depth(dep, step_map, depths, visiting))
                     .collect::<Result<Vec<_>>>()?
                     .into_iter()
                     .max()
@@ -453,7 +457,7 @@ impl WorkflowRunner {
 
         let mut visiting = std::collections::HashSet::new();
         for step in steps {
-            calc_depth(&step.name, steps, &mut depths, &mut visiting)?;
+            calc_depth(&step.name, &step_map, &mut depths, &mut visiting)?;
         }
 
         // Group by depth
