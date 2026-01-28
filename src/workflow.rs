@@ -140,6 +140,13 @@ impl WorkflowRunner {
         println!("{}", "=".repeat(50).dimmed());
         println!();
 
+        // Build step lookup map for O(1) access instead of O(n) linear scans
+        let step_map: HashMap<&str, &Step> = workflow
+            .steps
+            .iter()
+            .map(|s| (s.name.as_str(), s))
+            .collect();
+
         for (depth, step_names) in depth_levels.iter().enumerate() {
             let parallel_count = step_names.len();
             if parallel_count > 1 {
@@ -156,10 +163,8 @@ impl WorkflowRunner {
             let mut steps_to_run: Vec<(&Step, String, Option<String>, Option<String>)> = Vec::new();
 
             for step_name in step_names {
-                let step = workflow
-                    .steps
-                    .iter()
-                    .find(|s| &s.name == step_name)
+                let step = *step_map
+                    .get(step_name.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Step '{}' not found in workflow", step_name))?;
 
                 // Check condition if present
@@ -417,9 +422,9 @@ impl WorkflowRunner {
         // Calculate depth for each step
         let mut depths: HashMap<String, usize> = HashMap::new();
 
-        fn calc_depth<'a>(
+        fn calc_depth(
             name: &str,
-            step_map: &HashMap<&str, &'a Step>,
+            step_map: &HashMap<&str, &Step>,
             depths: &mut HashMap<String, usize>,
             visiting: &mut std::collections::HashSet<String>,
         ) -> Result<usize> {
