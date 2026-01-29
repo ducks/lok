@@ -141,7 +141,8 @@ CRITICAL RULES:
 name = "comment"
 depends_on = ["synthesize"]
 shell = """
-gh pr comment {{ arg.1 }} --body "## lok Review ({{ workflow.backends }} consensus)
+gh pr comment {{ arg.1 }} --body "$(cat <<'LOKEOF'
+## lok Review ({{ workflow.backends }} consensus)
 
 ### Verdict: {{ steps.synthesize.verdict }}
 
@@ -154,7 +155,9 @@ gh pr comment {{ arg.1 }} --body "## lok Review ({{ workflow.backends }} consens
 **Minor:** {{ steps.synthesize.minor }}
 
 ---
-*Automated review by lok review-pr workflow*"
+*Automated review by lok review-pr workflow*
+LOKEOF
+)"
 """
 
 [[steps]]

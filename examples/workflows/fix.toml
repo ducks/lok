@@ -1,0 +1,95 @@
+# Analyze an issue and prepare a fix plan for the conductor
+#
+# Usage:
+#   lok run fix 123
+#
+# This workflow:
+# 1. Fetches issue details
+# 2. Gets fix proposals from multiple backends
+# 3. Debates and converges on the best approach
+# 4. Comments on the issue with the plan ("tell us")
+# 5. Outputs the plan for the conductor to implement ("show us")
+
+name = "fix"
+description = "Analyze an issue and propose a fix for the conductor to implement"
+
+[[steps]]
+name = "fetch"
+shell = "gh issue view {{ arg.1 }} --json number,title,body,comments"
+
+[[steps]]
+name = "propose_claude"
+backend = "claude"
+depends_on = ["fetch"]
+prompt = """
+Propose a fix for this issue:
+
+{{ steps.fetch.output }}
+
+Read the relevant code and propose the APPROACH to fix this.
+Don't output code yet - explain:
+1. What's the root cause?
+2. What files need to change?
+3. What's your proposed fix?
+
+Be specific but concise.
+"""
+
+[[steps]]
+name = "propose_codex"
+backend = "codex"
+depends_on = ["fetch"]
+prompt = """
+Propose a fix for this issue:
+
+{{ steps.fetch.output }}
+
+Read the relevant code and propose the APPROACH to fix this.
+Don't output code yet - explain:
+1. What's the root cause?
+2. What files need to change?
+3. What's your proposed fix?
+
+Be specific but concise.
+"""
+
+[[steps]]
+name = "debate"
+backend = "claude"
+depends_on = ["propose_claude", "propose_codex"]
+prompt = """
+Two AI backends proposed fixes for this issue:
+
+{{ steps.fetch.output }}
+
+CLAUDE's proposal:
+{{ steps.propose_claude.output }}
+
+CODEX's proposal:
+{{ steps.propose_codex.output }}
+
+Analyze both proposals:
+1. What do they agree on?
+2. Where do they differ?
+3. Which approach is better and why?
+4. What's the FINAL consensus approach?
+
+Output a clear, specific implementation plan that incorporates the best ideas.
+Be specific about which files to change and what the changes should be.
+The conductor (an LLM) will implement this plan, so be precise.
+"""
+
+[[steps]]
+name = "comment"
+depends_on = ["debate"]
+shell = """
+gh issue comment {{ arg.1 }} --body "$(cat <<'LOKEOF'
+## lok Proposal ({{ workflow.backends }} consensus)
+
+{{ steps.debate.output }}
+
+---
+*Automated proposal by lok fix workflow. Conductor will implement.*
+LOKEOF
+)"
+"""
