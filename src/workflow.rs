@@ -605,6 +605,8 @@ impl WorkflowRunner {
     }
 
     /// Interpolate {{ steps.X.output }} variables in a string
+    ///
+    /// Uses replace_all for O(n) complexity instead of O(n*m) with repeated replace()
     fn interpolate(
         &self,
         template: &str,
@@ -612,23 +614,25 @@ impl WorkflowRunner {
         workflow_name: &str,
         current_step: &str,
     ) -> Result<String, WorkflowError> {
-        let mut output = template.to_string();
-
+        // First pass: validate all step references exist
         for cap in INTERPOLATE_RE.captures_iter(template) {
-            let full_match = cap.get(0).expect("regex group 0 always exists").as_str();
             let referenced_step = cap.get(1).expect("regex group 1 always exists").as_str();
-
-            let replacement = results
-                .get(referenced_step)
-                .map(|r| r.output.as_str())
-                .ok_or_else(|| WorkflowError::MissingStepOutput {
+            if !results.contains_key(referenced_step) {
+                return Err(WorkflowError::MissingStepOutput {
                     workflow: workflow_name.to_string(),
                     step: current_step.to_string(),
                     referenced: referenced_step.to_string(),
-                })?;
-
-            output = output.replace(full_match, replacement);
+                });
+            }
         }
+
+        // Second pass: replace all in one pass (O(n) instead of O(n*m))
+        let output = INTERPOLATE_RE
+            .replace_all(template, |caps: &regex::Captures| {
+                let step = &caps[1];
+                results.get(step).map(|r| r.output.as_str()).unwrap_or("")
+            })
+            .into_owned();
 
         Ok(output)
     }
@@ -651,6 +655,8 @@ impl WorkflowRunner {
     }
 
     /// Interpolate with JSON field access: {{ steps.X.field }} and env vars: {{ env.VAR }}
+    ///
+    /// Uses replace_all for O(n) complexity per pattern instead of O(n*m) with repeated replace()
     fn interpolate_with_fields(
         &self,
         template: &str,
@@ -658,67 +664,60 @@ impl WorkflowRunner {
         workflow_name: &str,
         current_step: &str,
     ) -> Result<String, WorkflowError> {
-        let mut output = self.interpolate(template, results, workflow_name, current_step)?;
+        let output = self.interpolate(template, results, workflow_name, current_step)?;
 
         // Handle {{ steps.X.field }} for JSON field access
-        for cap in FIELD_RE.captures_iter(template) {
-            let full_match = cap.get(0).expect("regex group 0 always exists").as_str();
+        // First validate all step references exist
+        for cap in FIELD_RE.captures_iter(&output) {
             let referenced_step = cap.get(1).expect("regex group 1 always exists").as_str();
             let field_name = cap.get(2).expect("regex group 2 always exists").as_str();
-
-            // Skip "output" - that's handled by regular interpolate
-            if field_name == "output" {
-                continue;
+            if field_name != "output" && !results.contains_key(referenced_step) {
+                return Err(WorkflowError::MissingStepOutput {
+                    workflow: workflow_name.to_string(),
+                    step: current_step.to_string(),
+                    referenced: referenced_step.to_string(),
+                });
             }
-
-            // Check if step exists first
-            let step_result =
-                results
-                    .get(referenced_step)
-                    .ok_or_else(|| WorkflowError::MissingStepOutput {
-                        workflow: workflow_name.to_string(),
-                        step: current_step.to_string(),
-                        referenced: referenced_step.to_string(),
-                    })?;
-
-            let replacement = extract_json_field(&step_result.output, field_name)
-                .unwrap_or_else(|| format!("[field {} not found]", field_name));
-
-            output = output.replace(full_match, &replacement);
         }
+        // Then replace all in one pass
+        let output = FIELD_RE
+            .replace_all(&output, |caps: &regex::Captures| {
+                let step = &caps[1];
+                let field = &caps[2];
+                if field == "output" {
+                    // Already handled by interpolate(), return original match
+                    caps[0].to_string()
+                } else {
+                    results
+                        .get(step)
+                        .and_then(|r| extract_json_field(&r.output, field))
+                        .unwrap_or_else(|| format!("[field {} not found]", field))
+                }
+            })
+            .into_owned();
 
-        // Handle {{ env.VAR }} for environment variables
-        for cap in ENV_RE.captures_iter(template) {
-            let full_match = cap.get(0).expect("regex group 0 always exists").as_str();
-            let var_name = cap.get(1).expect("regex group 1 always exists").as_str();
+        // Handle {{ env.VAR }} for environment variables - single pass
+        let output = ENV_RE
+            .replace_all(&output, |caps: &regex::Captures| {
+                let var_name = &caps[1];
+                std::env::var(var_name).unwrap_or_else(|_| format!("[env {} not set]", var_name))
+            })
+            .into_owned();
 
-            let replacement =
-                std::env::var(var_name).unwrap_or_else(|_| format!("[env {} not set]", var_name));
+        // Handle {{ arg.N }} for positional arguments (1-indexed) - single pass
+        let output = ARG_RE
+            .replace_all(&output, |caps: &regex::Captures| {
+                let arg_index: usize = caps[1].parse().unwrap_or(0);
+                if arg_index > 0 && arg_index <= self.args.len() {
+                    self.args[arg_index - 1].clone()
+                } else {
+                    format!("[arg {} not provided]", arg_index)
+                }
+            })
+            .into_owned();
 
-            output = output.replace(full_match, &replacement);
-        }
-
-        // Handle {{ arg.N }} for positional arguments (1-indexed)
-        for cap in ARG_RE.captures_iter(template) {
-            let full_match = cap.get(0).expect("regex group 0 always exists").as_str();
-            let arg_index: usize = cap
-                .get(1)
-                .expect("regex group 1 always exists")
-                .as_str()
-                .parse()
-                .unwrap_or(0);
-
-            let replacement = if arg_index > 0 && arg_index <= self.args.len() {
-                self.args[arg_index - 1].clone()
-            } else {
-                format!("[arg {} not provided]", arg_index)
-            };
-
-            output = output.replace(full_match, &replacement);
-        }
-
-        // Handle {{ workflow.backends }} - list unique backends used
-        if WORKFLOW_BACKENDS_RE.is_match(&output) {
+        // Handle {{ workflow.backends }} - list unique backends used - single pass
+        let output = if WORKFLOW_BACKENDS_RE.is_match(&output) {
             let mut backends: Vec<String> =
                 results.values().filter_map(|r| r.backend.clone()).collect();
             backends.sort();
@@ -742,10 +741,12 @@ impl WorkflowRunner {
                 formatted.join(" + ")
             };
 
-            output = WORKFLOW_BACKENDS_RE
+            WORKFLOW_BACKENDS_RE
                 .replace_all(&output, &replacement)
-                .to_string();
-        }
+                .into_owned()
+        } else {
+            output
+        };
 
         // Check for any remaining unknown {{ ... }} variables
         if let Some(cap) = UNKNOWN_VAR_RE.captures(&output) {
