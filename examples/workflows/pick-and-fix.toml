@@ -21,7 +21,7 @@ shell = "git checkout main && git pull"
 [[steps]]
 name = "list"
 depends_on = ["setup"]
-shell = "gh issue list --limit 10 --json number,title,body,labels"
+shell = "gh issue list --limit 50 --json number,title,body,labels"
 
 [[steps]]
 name = "open_prs"
