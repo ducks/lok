@@ -14,6 +14,37 @@ use crate::config::Config;
 use crate::context::{resolve_format_command, resolve_verify_command, CodebaseContext};
 use anyhow::{Context, Result};
 use colored::Colorize;
+use thiserror::Error;
+
+/// Typed errors for workflow execution
+#[derive(Debug, Error)]
+pub enum WorkflowError {
+    #[error("Workflow '{workflow}': step '{step}' depends on unknown step '{missing}'\n  hint: check depends_on list")]
+    MissingDependency {
+        workflow: String,
+        step: String,
+        missing: String,
+    },
+
+    #[error(
+        "Workflow '{workflow}': circular dependency detected: {chain}\n  hint: remove the cycle"
+    )]
+    CircularDependency { workflow: String, chain: String },
+
+    #[error("Workflow '{workflow}': step '{step}' references unknown step '{referenced}' in interpolation\n  hint: ensure the step exists and runs before this one")]
+    MissingStepOutput {
+        workflow: String,
+        step: String,
+        referenced: String,
+    },
+
+    #[error("Workflow '{workflow}': step '{step}' has unknown variable '{{{{ {variable} }}}}'\n  hint: valid forms are steps.X.output, steps.X.field, env.VAR, arg.N, workflow.backends")]
+    UnknownVariable {
+        workflow: String,
+        step: String,
+        variable: String,
+    },
+}
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -46,6 +77,10 @@ static ARG_RE: LazyLock<regex::Regex> =
 /// Regex for matching {{ workflow.backends }} pattern
 static WORKFLOW_BACKENDS_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\{\{\s*workflow\.backends\s*\}\}").unwrap());
+
+/// Regex for detecting unknown {{ ... }} variables after all substitutions
+static UNKNOWN_VAR_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\{\{\s*([^}]+)\s*\}\}").unwrap());
 
 /// A file edit to apply
 #[derive(Debug, Deserialize, Clone)]
@@ -153,7 +188,7 @@ impl WorkflowRunner {
         let mut ordered_results: Vec<StepResult> = Vec::new();
 
         // Group steps by depth level for parallel execution
-        let depth_levels = self.group_by_depth(&workflow.steps)?;
+        let depth_levels = self.group_by_depth(&workflow.steps, &workflow.name)?;
 
         println!("{} {}", "Running workflow:".bold(), workflow.name.cyan());
         if let Some(ref desc) = workflow.description {
@@ -201,16 +236,23 @@ impl WorkflowRunner {
                 }
 
                 // Interpolate variables in prompt/shell (uses results from previous depths)
-                let prompt = self.interpolate_with_fields(&step.prompt, &results);
+                let prompt = self.interpolate_with_fields(
+                    &step.prompt,
+                    &results,
+                    &workflow.name,
+                    &step.name,
+                )?;
                 let shell = step
                     .shell
                     .as_ref()
-                    .map(|s| self.interpolate_with_fields(s, &results));
+                    .map(|s| self.interpolate_with_fields(s, &results, &workflow.name, &step.name))
+                    .transpose()?;
                 // When verify is set, also resolve format command to run first
                 let verify_value = step
                     .verify
                     .as_ref()
-                    .map(|v| self.interpolate_with_fields(v, &results));
+                    .map(|v| self.interpolate_with_fields(v, &results, &workflow.name, &step.name))
+                    .transpose()?;
                 let format = verify_value
                     .as_ref()
                     .and_then(|v| resolve_format_command(v, &self.context));
@@ -473,7 +515,7 @@ impl WorkflowRunner {
 
     /// Group steps by depth level for parallel execution
     /// Depth 0 = no dependencies, Depth N = depends on steps at depth < N
-    fn group_by_depth(&self, steps: &[Step]) -> Result<Vec<Vec<String>>> {
+    fn group_by_depth(&self, steps: &[Step], workflow_name: &str) -> Result<Vec<Vec<String>>> {
         // Build step lookup map for O(1) access instead of O(n) linear scans
         let step_map: HashMap<&str, &Step> = steps.iter().map(|s| (s.name.as_str(), s)).collect();
 
@@ -481,7 +523,12 @@ impl WorkflowRunner {
         for step in steps {
             for dep in &step.depends_on {
                 if !step_map.contains_key(dep.as_str()) {
-                    anyhow::bail!("Step '{}' depends on unknown step '{}'", step.name, dep);
+                    return Err(WorkflowError::MissingDependency {
+                        workflow: workflow_name.to_string(),
+                        step: step.name.clone(),
+                        missing: dep.clone(),
+                    }
+                    .into());
                 }
             }
         }
@@ -493,17 +540,25 @@ impl WorkflowRunner {
             name: &str,
             step_map: &HashMap<&str, &Step>,
             depths: &mut HashMap<String, usize>,
-            visiting: &mut std::collections::HashSet<String>,
+            visiting: &mut Vec<String>, // Vec to preserve order for chain tracking
+            workflow_name: &str,
         ) -> Result<usize> {
             if let Some(&d) = depths.get(name) {
                 return Ok(d);
             }
 
-            if visiting.contains(name) {
-                anyhow::bail!("Circular dependency detected at step: {}", name);
+            // Check for circular dependency and build chain
+            if let Some(pos) = visiting.iter().position(|v| v == name) {
+                let mut chain: Vec<_> = visiting[pos..].to_vec();
+                chain.push(name.to_string());
+                return Err(WorkflowError::CircularDependency {
+                    workflow: workflow_name.to_string(),
+                    chain: chain.join(" -> "),
+                }
+                .into());
             }
 
-            visiting.insert(name.to_string());
+            visiting.push(name.to_string());
 
             let step = step_map
                 .get(name)
@@ -514,7 +569,7 @@ impl WorkflowRunner {
                 let max_dep_depth = step
                     .depends_on
                     .iter()
-                    .map(|dep| calc_depth(dep, step_map, depths, visiting))
+                    .map(|dep| calc_depth(dep, step_map, depths, visiting, workflow_name))
                     .collect::<Result<Vec<_>>>()?
                     .into_iter()
                     .max()
@@ -522,14 +577,20 @@ impl WorkflowRunner {
                 max_dep_depth + 1
             };
 
-            visiting.remove(name);
+            visiting.pop();
             depths.insert(name.to_string(), depth);
             Ok(depth)
         }
 
-        let mut visiting = std::collections::HashSet::new();
+        let mut visiting = Vec::new();
         for step in steps {
-            calc_depth(&step.name, &step_map, &mut depths, &mut visiting)?;
+            calc_depth(
+                &step.name,
+                &step_map,
+                &mut depths,
+                &mut visiting,
+                workflow_name,
+            )?;
         }
 
         // Group by depth
@@ -544,22 +605,32 @@ impl WorkflowRunner {
     }
 
     /// Interpolate {{ steps.X.output }} variables in a string
-    fn interpolate(&self, template: &str, results: &HashMap<String, StepResult>) -> String {
+    fn interpolate(
+        &self,
+        template: &str,
+        results: &HashMap<String, StepResult>,
+        workflow_name: &str,
+        current_step: &str,
+    ) -> Result<String, WorkflowError> {
         let mut output = template.to_string();
 
         for cap in INTERPOLATE_RE.captures_iter(template) {
-            let full_match = cap.get(0).unwrap().as_str();
-            let step_name = cap.get(1).unwrap().as_str();
+            let full_match = cap.get(0).expect("regex group 0 always exists").as_str();
+            let referenced_step = cap.get(1).expect("regex group 1 always exists").as_str();
 
             let replacement = results
-                .get(step_name)
+                .get(referenced_step)
                 .map(|r| r.output.as_str())
-                .unwrap_or("[step not found]");
+                .ok_or_else(|| WorkflowError::MissingStepOutput {
+                    workflow: workflow_name.to_string(),
+                    step: current_step.to_string(),
+                    referenced: referenced_step.to_string(),
+                })?;
 
             output = output.replace(full_match, replacement);
         }
 
-        output
+        Ok(output)
     }
 
     /// Evaluate a simple condition like "steps.scan.output contains 'critical'"
@@ -584,23 +655,33 @@ impl WorkflowRunner {
         &self,
         template: &str,
         results: &HashMap<String, StepResult>,
-    ) -> String {
-        let mut output = self.interpolate(template, results);
+        workflow_name: &str,
+        current_step: &str,
+    ) -> Result<String, WorkflowError> {
+        let mut output = self.interpolate(template, results, workflow_name, current_step)?;
 
         // Handle {{ steps.X.field }} for JSON field access
         for cap in FIELD_RE.captures_iter(template) {
-            let full_match = cap.get(0).unwrap().as_str();
-            let step_name = cap.get(1).unwrap().as_str();
-            let field_name = cap.get(2).unwrap().as_str();
+            let full_match = cap.get(0).expect("regex group 0 always exists").as_str();
+            let referenced_step = cap.get(1).expect("regex group 1 always exists").as_str();
+            let field_name = cap.get(2).expect("regex group 2 always exists").as_str();
 
             // Skip "output" - that's handled by regular interpolate
             if field_name == "output" {
                 continue;
             }
 
-            let replacement = results
-                .get(step_name)
-                .and_then(|r| extract_json_field(&r.output, field_name))
+            // Check if step exists first
+            let step_result =
+                results
+                    .get(referenced_step)
+                    .ok_or_else(|| WorkflowError::MissingStepOutput {
+                        workflow: workflow_name.to_string(),
+                        step: current_step.to_string(),
+                        referenced: referenced_step.to_string(),
+                    })?;
+
+            let replacement = extract_json_field(&step_result.output, field_name)
                 .unwrap_or_else(|| format!("[field {} not found]", field_name));
 
             output = output.replace(full_match, &replacement);
@@ -608,8 +689,8 @@ impl WorkflowRunner {
 
         // Handle {{ env.VAR }} for environment variables
         for cap in ENV_RE.captures_iter(template) {
-            let full_match = cap.get(0).unwrap().as_str();
-            let var_name = cap.get(1).unwrap().as_str();
+            let full_match = cap.get(0).expect("regex group 0 always exists").as_str();
+            let var_name = cap.get(1).expect("regex group 1 always exists").as_str();
 
             let replacement =
                 std::env::var(var_name).unwrap_or_else(|_| format!("[env {} not set]", var_name));
@@ -619,8 +700,13 @@ impl WorkflowRunner {
 
         // Handle {{ arg.N }} for positional arguments (1-indexed)
         for cap in ARG_RE.captures_iter(template) {
-            let full_match = cap.get(0).unwrap().as_str();
-            let arg_index: usize = cap.get(1).unwrap().as_str().parse().unwrap_or(0);
+            let full_match = cap.get(0).expect("regex group 0 always exists").as_str();
+            let arg_index: usize = cap
+                .get(1)
+                .expect("regex group 1 always exists")
+                .as_str()
+                .parse()
+                .unwrap_or(0);
 
             let replacement = if arg_index > 0 && arg_index <= self.args.len() {
                 self.args[arg_index - 1].clone()
@@ -633,10 +719,8 @@ impl WorkflowRunner {
 
         // Handle {{ workflow.backends }} - list unique backends used
         if WORKFLOW_BACKENDS_RE.is_match(&output) {
-            let mut backends: Vec<String> = results
-                .values()
-                .filter_map(|r| r.backend.clone())
-                .collect();
+            let mut backends: Vec<String> =
+                results.values().filter_map(|r| r.backend.clone()).collect();
             backends.sort();
             backends.dedup();
 
@@ -658,10 +742,26 @@ impl WorkflowRunner {
                 formatted.join(" + ")
             };
 
-            output = WORKFLOW_BACKENDS_RE.replace_all(&output, &replacement).to_string();
+            output = WORKFLOW_BACKENDS_RE
+                .replace_all(&output, &replacement)
+                .to_string();
         }
 
-        output
+        // Check for any remaining unknown {{ ... }} variables
+        if let Some(cap) = UNKNOWN_VAR_RE.captures(&output) {
+            let variable = cap
+                .get(1)
+                .expect("regex group 1 always exists")
+                .as_str()
+                .trim();
+            return Err(WorkflowError::UnknownVariable {
+                workflow: workflow_name.to_string(),
+                step: current_step.to_string(),
+                variable: variable.to_string(),
+            });
+        }
+
+        Ok(output)
     }
 }
 
@@ -1135,7 +1235,9 @@ mod tests {
 
         let template =
             "Verdict: {{ steps.synthesize.verdict }}\nSummary: {{ steps.synthesize.summary }}";
-        let result = runner.interpolate_with_fields(template, &results);
+        let result = runner
+            .interpolate_with_fields(template, &results, "test-workflow", "test-step")
+            .unwrap();
 
         assert!(
             result.contains("REQUEST_CHANGES"),
