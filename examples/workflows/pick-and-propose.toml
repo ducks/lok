@@ -1,31 +1,24 @@
-# Pick an issue from GitHub and fix it with multi-backend consensus
+# Pick an issue and get multi-backend consensus on how to fix it
 #
 # Usage:
-#   lok run pick-and-fix
+#   lok run pick-and-propose
 #
 # This workflow:
-# 1. Checks out main and pulls latest
-# 2. Fetches open issues (excluding those with open PRs)
-# 3. Has Claude pick the best one to fix
-# 4. Gets fix proposals from multiple backends
-# 5. Backends debate and converge on the best approach
-# 6. Applies the consensus fix, verifies, commits, and creates a PR
+# 1. Fetches open issues (excluding those with open PRs)
+# 2. Has Claude pick the best one to fix
+# 3. Gets fix proposals from multiple backends
+# 4. Backends debate and converge on the best approach
+# 5. Outputs the consensus plan for the conductor to implement
 
-name = "pick-and-fix"
-description = "Pick the best open issue and fix it with multi-backend consensus"
-
-[[steps]]
-name = "setup"
-shell = "git checkout main && git pull"
+name = "pick-and-propose"
+description = "Pick an issue and get multi-backend consensus on the fix approach"
 
 [[steps]]
 name = "list"
-depends_on = ["setup"]
 shell = "gh issue list --limit 50 --json number,title,body,labels"
 
 [[steps]]
 name = "open_prs"
-depends_on = ["setup"]
 shell = "gh pr list --json number,title,body --jq '[.[] | {number, title, body}]'"
 
 [[steps]]
@@ -126,77 +119,5 @@ Analyze both proposals:
 4. What's the FINAL consensus approach?
 
 Output a clear, specific plan for the fix that incorporates the best ideas from both.
+Be specific about which files to change and what the changes should be.
 """
-
-[[steps]]
-name = "fix"
-backend = "codex"
-depends_on = ["debate"]
-apply_edits = true
-verify = "true"
-prompt = """
-Implement the consensus fix for Issue #{{ steps.pick.number }}: {{ steps.pick.title }}
-
-The debate concluded with this approach:
-{{ steps.debate.output }}
-
-You are in JSON-ONLY mode. Your entire response must be valid JSON, nothing else.
-
-DO NOT:
-- Ask for permission
-- Request to read files
-- Use any tools
-- Add explanation before or after JSON
-- Add markdown code fences
-
-Your response must be EXACTLY this structure:
-{"edits":[{"file":"path/to/file.rs","old":"exact text","new":"new text"}],"summary":"one line"}
-
-RULES:
-- "old" must match current file content EXACTLY (whitespace matters)
-- "file" paths relative to repo root
-- Keep edits minimal
-- Follow the debate consensus
-
-START YOUR RESPONSE WITH { AND END WITH }
-"""
-
-[[steps]]
-name = "branch"
-shell = "git checkout -b fix/issue-{{ steps.pick.number }}-$(date +%s)"
-depends_on = ["fix"]
-
-[[steps]]
-name = "commit"
-shell = """
-git add -A && git commit -m "fix: {{ steps.fix.summary }}
-
-Closes #{{ steps.pick.number }}"
-"""
-depends_on = ["branch"]
-
-[[steps]]
-name = "push"
-shell = "git push -u origin HEAD"
-depends_on = ["commit"]
-
-[[steps]]
-name = "pr"
-shell = """
-gh pr create \
-  --title 'fix: {{ steps.fix.summary }}' \
-  --body '## Issue
-Closes #{{ steps.pick.number }}: {{ steps.pick.title }}
-
-## Why this issue?
-{{ steps.pick.reason }}
-
-## Fix
-{{ steps.fix.summary }}
-
-This fix was developed through Claude + Codex consensus.
-
----
-Automated fix by lok pick-and-fix workflow.'
-"""
-depends_on = ["push"]
