@@ -43,13 +43,11 @@ These PRs are already open (skip issues they reference):
 
 Pick the ONE issue that:
 1. Does NOT already have an open PR (check PR titles/bodies for "Closes #N" or "issue N")
-2. Has the highest priority label (P0 > P1 > P2 > P3 > unlabeled)
-3. Is clearly defined (not vague or sprawling)
-4. Can be fixed with a focused code change
-5. Won't require major refactoring
+2. Is clearly defined (not vague or sprawling)
+3. Can be fixed with a focused code change
+4. Won't require major refactoring
 
-PRIORITY ORDER: Always prefer P0 issues first, then P1, then P2, etc.
-Look at the "labels" field in each issue - pick from highest priority that meets criteria.
+If issues have priority labels (P0/P1/P2/P3), prefer higher priority.
 
 Output JSON:
 {
@@ -166,20 +164,25 @@ Implement the consensus fix for Issue #{{ steps.pick.number }}: {{ steps.pick.ti
 The debate concluded with this approach:
 {{ steps.debate.output }}
 
-Generate the code edits as JSON. Do NOT ask for permission or use any tools.
-Your response must be ONLY a JSON object, nothing else.
+You are in JSON-ONLY mode. Your entire response must be valid JSON, nothing else.
 
-{
-  "edits": [{"file": "path/to/file.rs", "old": "exact text to replace", "new": "replacement text"}],
-  "summary": "one-line description of the fix"
-}
+DO NOT:
+- Ask for permission
+- Request to read files
+- Use any tools
+- Add explanation before or after JSON
+- Add markdown code fences
 
-CRITICAL RULES:
-- Output ONLY the JSON object above, no other text
-- "old" must match the current file content EXACTLY (including whitespace)
-- "file" paths are relative to repo root
-- Keep edits minimal and focused
-- Follow the consensus approach from the debate
+Your response must be EXACTLY this structure:
+{"edits":[{"file":"path/to/file.rs","old":"exact text","new":"new text"}],"summary":"one line"}
+
+RULES:
+- "old" must match current file content EXACTLY (whitespace matters)
+- "file" paths relative to repo root
+- Keep edits minimal
+- Follow the debate consensus
+
+START YOUR RESPONSE WITH { AND END WITH }
 """
 
 [[steps]]
