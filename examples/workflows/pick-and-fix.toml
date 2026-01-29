@@ -107,32 +107,11 @@ Be specific but concise.
 """
 
 [[steps]]
-name = "propose_gemini"
-backend = "gemini"
-depends_on = ["fetch"]
-prompt = """
-Propose a fix for this issue:
-
-Issue #{{ steps.pick.number }}: {{ steps.pick.title }}
-
-Details:
-{{ steps.fetch.output }}
-
-Read the relevant code and propose the APPROACH to fix this.
-Don't output JSON yet - just explain:
-1. What's the root cause?
-2. What files need to change?
-3. What's your proposed fix?
-
-Be specific but concise.
-"""
-
-[[steps]]
 name = "debate"
 backend = "claude"
-depends_on = ["propose_claude", "propose_codex", "propose_gemini"]
+depends_on = ["propose_claude", "propose_codex"]
 prompt = """
-Three AI backends proposed fixes for Issue #{{ steps.pick.number }}: {{ steps.pick.title }}
+Two AI backends proposed fixes for Issue #{{ steps.pick.number }}: {{ steps.pick.title }}
 
 CLAUDE's proposal:
 {{ steps.propose_claude.output }}
@@ -140,16 +119,13 @@ CLAUDE's proposal:
 CODEX's proposal:
 {{ steps.propose_codex.output }}
 
-GEMINI's proposal:
-{{ steps.propose_gemini.output }}
-
-Analyze all three proposals:
+Analyze both proposals:
 1. What do they agree on?
 2. Where do they differ?
 3. Which approach is better and why?
 4. What's the FINAL consensus approach?
 
-Output a clear, specific plan for the fix that incorporates the best ideas from all three.
+Output a clear, specific plan for the fix that incorporates the best ideas from both.
 """
 
 [[steps]]
