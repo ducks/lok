@@ -330,13 +330,14 @@ async fn main() -> Result<()> {
             let cwd_str = cwd.to_string_lossy().to_string();
 
             // Check cache first (unless --no-cache)
-            let cache = cache::Cache::new(&config.cache);
+            let mut cache = cache::Cache::new(&config.cache);
             let cache_key = cache.cache_key(&prompt, &backend_names, &cwd_str);
 
             if !no_cache {
                 if let Some(cached_results) = cache.get(&cache_key) {
                     println!("{}", "(cached)".dimmed());
                     output::print_results(&cached_results);
+                    cache.print_warnings();
                     return Ok(());
                 }
             }
@@ -345,9 +346,7 @@ async fn main() -> Result<()> {
 
             // Cache the results
             if !no_cache {
-                if let Err(e) = cache.set(&cache_key, &results) {
-                    eprintln!("{} Failed to cache results: {}", "warning:".yellow(), e);
-                }
+                cache.set(&cache_key, &results);
             }
 
             output::print_results(&results);
@@ -355,6 +354,8 @@ async fn main() -> Result<()> {
             if cli.verbose {
                 backend::print_verbose_timing(&results);
             }
+
+            cache.print_warnings();
         }
         Commands::Hunt {
             dir,
