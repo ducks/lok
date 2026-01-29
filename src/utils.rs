@@ -1,5 +1,22 @@
 //! Shared utility functions
 
+use colored::Colorize;
+use std::path::{Path, PathBuf};
+
+/// Attempts to canonicalize a path, printing a warning and returning
+/// the original path if canonicalization fails.
+pub fn canonicalize_or_warn(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|e| {
+        eprintln!(
+            "{} Failed to canonicalize path '{}': {}",
+            "warning:".yellow(),
+            path.display(),
+            e
+        );
+        path.to_path_buf()
+    })
+}
+
 /// Truncate a string to a maximum number of characters, adding "..." if truncated
 pub fn truncate(s: &str, max_chars: usize) -> String {
     let char_count = s.chars().count();

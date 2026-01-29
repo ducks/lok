@@ -6,6 +6,8 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::utils;
+
 pub struct Conductor {
     api_key: SecretString,
     model: String,
@@ -198,7 +200,7 @@ Always explain your reasoning briefly before making tool calls."#,
     }
 
     pub async fn conduct(&self, task: &str, cwd: &Path) -> Result<String> {
-        let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+        let cwd = utils::canonicalize_or_warn(cwd);
 
         println!("{}", "Conductor starting...".cyan().bold());
         println!("Task: {}", task);

@@ -6,6 +6,8 @@ use colored::Colorize;
 use futures::future::join_all;
 use secrecy::ExposeSecret;
 use std::path::Path;
+
+use crate::utils;
 use std::sync::Arc;
 
 /// An agent task to be executed
@@ -36,7 +38,7 @@ impl Spawn {
     pub fn new(config: &Config, cwd: &Path) -> Result<Self> {
         Ok(Self {
             config: config.clone(),
-            cwd: cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
+            cwd: utils::canonicalize_or_warn(cwd),
             delegator: Delegator::new(),
         })
     }

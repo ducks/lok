@@ -16,6 +16,8 @@ use colored::Colorize;
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
+
+use crate::utils;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -117,7 +119,7 @@ pub async fn run_query_with_config(
     cwd: &Path,
     config: &Config,
 ) -> Result<Vec<QueryResult>> {
-    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let cwd = utils::canonicalize_or_warn(cwd);
     let default_timeout = config.defaults.timeout;
     let parallel = config.defaults.parallel;
 
