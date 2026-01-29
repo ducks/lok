@@ -153,7 +153,7 @@ Output a clear, specific plan for the fix that incorporates the best ideas from 
 
 [[steps]]
 name = "fix"
-backend = "claude"
+backend = "codex"
 depends_on = ["debate"]
 apply_edits = true
 verify = "true"
@@ -163,16 +163,18 @@ Implement the consensus fix for Issue #{{ steps.pick.number }}: {{ steps.pick.ti
 The debate concluded with this approach:
 {{ steps.debate.output }}
 
-Now generate the actual code edits.
+Generate the code edits as JSON. Do NOT ask for permission or use any tools.
+Your response must be ONLY a JSON object, nothing else.
 
-Output JSON:
 {
   "edits": [{"file": "path/to/file.rs", "old": "exact text to replace", "new": "replacement text"}],
   "summary": "one-line description of the fix"
 }
 
-IMPORTANT:
-- "old" must match EXACTLY (including whitespace)
+CRITICAL RULES:
+- Output ONLY the JSON object above, no other text
+- "old" must match the current file content EXACTLY (including whitespace)
+- "file" paths are relative to repo root
 - Keep edits minimal and focused
 - Follow the consensus approach from the debate
 """
