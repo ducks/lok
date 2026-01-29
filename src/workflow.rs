@@ -1046,7 +1046,8 @@ mod tests {
         let config = Config::default();
         let runner = WorkflowRunner::new(config, PathBuf::from("."), vec![]);
 
-        let template = "Verdict: {{ steps.synthesize.verdict }}\nSummary: {{ steps.synthesize.summary }}";
+        let template =
+            "Verdict: {{ steps.synthesize.verdict }}\nSummary: {{ steps.synthesize.summary }}";
         let result = runner.interpolate_with_fields(template, &results);
 
         assert!(
