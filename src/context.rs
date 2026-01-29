@@ -248,14 +248,42 @@ impl CodebaseContext {
         }
     }
 
-    /// Get the default verify command for this codebase based on detected language and tools.
+    /// Get the default format command for this codebase (auto-fixes formatting).
+    pub fn format_command(&self) -> Option<String> {
+        match self.detected_language.as_deref() {
+            Some("rust") => Some("cargo fmt".to_string()),
+            Some("go") => Some("go fmt ./...".to_string()),
+            Some("python") | Some("python/django") | Some("python/fastapi") => {
+                if self.has_ruff {
+                    Some("ruff format .".to_string())
+                } else {
+                    None
+                }
+            }
+            Some("typescript") | Some("javascript") => {
+                if self.has_prettier {
+                    Some("npm run format --if-present".to_string())
+                } else {
+                    None
+                }
+            }
+            Some("ruby/rails") | Some("ruby") => {
+                if self.has_rubocop {
+                    Some("bundle exec rubocop -a".to_string())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the default verify command for this codebase (checks lint + build).
     pub fn verify_command(&self) -> Option<String> {
         match self.detected_language.as_deref() {
-            Some("rust") => {
-                Some("cargo fmt --check && cargo clippy -- -D warnings && cargo build".to_string())
-            }
+            Some("rust") => Some("cargo clippy -- -D warnings && cargo build".to_string()),
             Some("go") => {
-                let mut cmd = "go fmt ./... && go vet ./...".to_string();
+                let mut cmd = "go vet ./...".to_string();
                 if self.has_golangci_lint {
                     cmd.push_str(" && golangci-lint run");
                 }
@@ -265,7 +293,7 @@ impl CodebaseContext {
             Some("python") | Some("python/django") | Some("python/fastapi") => {
                 let mut cmd = String::new();
                 if self.has_ruff {
-                    cmd.push_str("ruff check . && ruff format --check .");
+                    cmd.push_str("ruff check .");
                 } else if self.has_mypy {
                     cmd.push_str("mypy .");
                 }
@@ -280,16 +308,13 @@ impl CodebaseContext {
                 if self.has_eslint {
                     parts.push("npm run lint --if-present");
                 }
-                if self.has_prettier {
-                    parts.push("npm run format:check --if-present");
-                }
                 parts.push("npm run build --if-present");
                 Some(parts.join(" && "))
             }
             Some("ruby/rails") | Some("ruby") => {
                 let mut parts = Vec::new();
                 if self.has_rubocop {
-                    parts.push("bundle exec rubocop");
+                    parts.push("bundle exec rubocop --lint");
                 }
                 if self.has_rspec {
                     parts.push("bundle exec rspec --dry-run");
@@ -305,7 +330,27 @@ impl CodebaseContext {
     }
 }
 
-/// Resolve a verify value to an actual command.
+/// Resolve a format value to an actual command (auto-fixes formatting).
+///
+/// - `"true"` -> auto-detect project type and use its format command
+/// - `"rust"`, `"node"`, etc. -> use that language's format command
+/// - anything else -> use as-is (custom command)
+pub fn resolve_format_command(format: &str, ctx: &CodebaseContext) -> Option<String> {
+    match format.trim().to_lowercase().as_str() {
+        "true" => ctx.format_command(),
+        "false" | "" => None,
+        "rust" => Some("cargo fmt".to_string()),
+        "go" | "golang" => Some("go fmt ./...".to_string()),
+        "python" | "py" => Some("ruff format .".to_string()),
+        "node" | "nodejs" | "javascript" | "typescript" => {
+            Some("npm run format --if-present".to_string())
+        }
+        "ruby" => Some("bundle exec rubocop -a".to_string()),
+        _ => Some(format.to_string()), // Custom command
+    }
+}
+
+/// Resolve a verify value to an actual command (checks lint + build).
 ///
 /// - `"true"` -> auto-detect project type and use its verify command
 /// - `"rust"`, `"node"`, etc. -> use that language's verify command
@@ -314,15 +359,13 @@ pub fn resolve_verify_command(verify: &str, ctx: &CodebaseContext) -> Option<Str
     match verify.trim().to_lowercase().as_str() {
         "true" => ctx.verify_command(),
         "false" | "" => None,
-        "rust" => {
-            Some("cargo fmt --check && cargo clippy -- -D warnings && cargo build".to_string())
-        }
-        "go" | "golang" => Some("go fmt ./... && go vet ./... && go build ./...".to_string()),
-        "python" | "py" => Some("ruff check . && ruff format --check .".to_string()),
+        "rust" => Some("cargo clippy -- -D warnings && cargo build".to_string()),
+        "go" | "golang" => Some("go vet ./... && go build ./...".to_string()),
+        "python" | "py" => Some("ruff check .".to_string()),
         "node" | "nodejs" | "javascript" | "typescript" => {
             Some("npm run lint --if-present && npm run build --if-present".to_string())
         }
-        "ruby" => Some("bundle exec rubocop".to_string()),
+        "ruby" => Some("bundle exec rubocop --lint".to_string()),
         _ => Some(verify.to_string()), // Custom command
     }
 }
