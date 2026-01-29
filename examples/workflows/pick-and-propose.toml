@@ -121,3 +121,18 @@ Analyze both proposals:
 Output a clear, specific plan for the fix that incorporates the best ideas from both.
 Be specific about which files to change and what the changes should be.
 """
+
+[[steps]]
+name = "comment"
+depends_on = ["debate"]
+shell = """
+gh issue comment {{ steps.pick.number }} --body "$(cat <<'LOKEOF'
+## lok Proposal ({{ workflow.backends }} consensus)
+
+{{ steps.debate.output }}
+
+---
+*Automated proposal by lok pick-and-propose workflow*
+LOKEOF
+)"
+"""
