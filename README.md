@@ -40,7 +40,14 @@ Lok wraps existing LLM CLI tools. Install the ones you want to use:
 | Claude | [claude.ai/download](https://claude.ai/download) | Claude Code CLI |
 | Ollama | [ollama.ai](https://ollama.ai) | Local models, no API keys |
 
-Run `lok doctor` to see which backends are detected.
+For issue/PR workflows, you also need:
+
+| Tool | Install | Used by |
+|------|---------|---------|
+| gh | [cli.github.com](https://cli.github.com) | `lok run fix`, `lok run review-pr` |
+
+Run `lok doctor` to see which backends are detected. Core commands (`lok ask`,
+`lok hunt`, `lok audit`) work without `gh`.
 
 ## Commands
 
