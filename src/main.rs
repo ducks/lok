@@ -1433,7 +1433,7 @@ fn parse_pr_identifier(pr: &str, repo: Option<&str>) -> Result<(String, String)>
         let parts: Vec<&str> = url_clean.split('/').filter(|s| !s.is_empty()).collect();
 
         // Validate host - exact match for security (no .contains() which allows github.com.evil.com)
-        let host = parts.get(1).map(|s| *s).unwrap_or("");
+        let host = parts.get(1).copied().unwrap_or("");
         let is_github = host == "github.com";
         let is_gitlab = host == "gitlab.com" || host.contains("gitlab.");
 
