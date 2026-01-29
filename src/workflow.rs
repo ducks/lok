@@ -43,6 +43,10 @@ static ENV_RE: LazyLock<regex::Regex> =
 static ARG_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\{\{\s*arg\.(\d+)\s*\}\}").unwrap());
 
+/// Regex for matching {{ workflow.backends }} pattern
+static WORKFLOW_BACKENDS_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\{\{\s*workflow\.backends\s*\}\}").unwrap());
+
 /// A file edit to apply
 #[derive(Debug, Deserialize, Clone)]
 pub struct FileEdit {
@@ -111,6 +115,7 @@ pub struct StepResult {
     pub output: String,
     pub success: bool,
     pub elapsed_ms: u64,
+    pub backend: Option<String>,
 }
 
 /// Prepared step ready for execution
@@ -260,6 +265,7 @@ impl WorkflowRunner {
                                         output,
                                         success: true,
                                         elapsed_ms,
+                                        backend: None,
                                     };
                                 }
                                 Err(e) => {
@@ -270,6 +276,7 @@ impl WorkflowRunner {
                                         output: format!("Error: {}", e),
                                         success: false,
                                         elapsed_ms,
+                                        backend: None,
                                     };
                                 }
                             }
@@ -284,6 +291,7 @@ impl WorkflowRunner {
                                     output: format!("Backend not found: {}", backend_name),
                                     success: false,
                                     elapsed_ms: 0,
+                                    backend: Some(backend_name),
                                 };
                             }
                         };
@@ -296,6 +304,7 @@ impl WorkflowRunner {
                                     output: format!("Failed to create backend: {}", e),
                                     success: false,
                                     elapsed_ms: 0,
+                                    backend: Some(backend_name),
                                 };
                             }
                         };
@@ -307,6 +316,7 @@ impl WorkflowRunner {
                                 output: format!("Backend {} not available", backend_name),
                                 success: false,
                                 elapsed_ms: 0,
+                                backend: Some(backend_name),
                             };
                         }
 
@@ -351,6 +361,7 @@ impl WorkflowRunner {
                                                             ),
                                                             success: false,
                                                             elapsed_ms,
+                                                            backend: Some(backend_name.clone()),
                                                         };
                                                     }
                                                 }
@@ -370,6 +381,7 @@ impl WorkflowRunner {
                                                 ),
                                                 success: false,
                                                 elapsed_ms,
+                                                backend: Some(backend_name.clone()),
                                             };
                                         }
                                     }
@@ -414,6 +426,7 @@ impl WorkflowRunner {
                                                 ),
                                                 success: false,
                                                 elapsed_ms,
+                                                backend: Some(backend_name.clone()),
                                             };
                                         }
                                     }
@@ -424,6 +437,7 @@ impl WorkflowRunner {
                                     output: text,
                                     success: true,
                                     elapsed_ms,
+                                    backend: Some(backend_name),
                                 }
                             }
                             Err(e) => {
@@ -433,6 +447,7 @@ impl WorkflowRunner {
                                     output: format!("Error: {}", e),
                                     success: false,
                                     elapsed_ms,
+                                    backend: Some(backend_name),
                                 }
                             }
                         }
@@ -614,6 +629,36 @@ impl WorkflowRunner {
             };
 
             output = output.replace(full_match, &replacement);
+        }
+
+        // Handle {{ workflow.backends }} - list unique backends used
+        if WORKFLOW_BACKENDS_RE.is_match(&output) {
+            let mut backends: Vec<String> = results
+                .values()
+                .filter_map(|r| r.backend.clone())
+                .collect();
+            backends.sort();
+            backends.dedup();
+
+            // Capitalize first letter of each backend name
+            let formatted: Vec<String> = backends
+                .iter()
+                .map(|b| {
+                    let mut chars = b.chars();
+                    match chars.next() {
+                        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+                        None => String::new(),
+                    }
+                })
+                .collect();
+
+            let replacement = if formatted.is_empty() {
+                "lok".to_string()
+            } else {
+                formatted.join(" + ")
+            };
+
+            output = WORKFLOW_BACKENDS_RE.replace_all(&output, &replacement).to_string();
         }
 
         output
@@ -1081,6 +1126,7 @@ mod tests {
                 output: synthesize_output.to_string(),
                 success: true,
                 elapsed_ms: 1000,
+                backend: Some("claude".to_string()),
             },
         );
 

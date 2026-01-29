@@ -82,6 +82,8 @@ name = "review_gemini"
 backend = "gemini"
 depends_on = ["fetch-meta", "fetch-diff"]
 prompt = """
+IMPORTANT: Be concise and direct. Do NOT make any tool calls. Do NOT investigate or read files. Work ONLY with the context provided below. Limit your response to 300 words.
+
 You are reviewing PR #{{ arg.1 }}.
 
 ## PR Metadata
@@ -90,19 +92,13 @@ You are reviewing PR #{{ arg.1 }}.
 ## Code Changes
 {{ steps.fetch-diff.output }}
 
-Perform a thorough code review. Check for:
-1. Correctness - Does the code do what it claims?
-2. Bugs - Are there any logic errors, edge cases, or potential crashes?
-3. Security - Any security issues (injection, unsafe operations)?
-4. Completeness - Are there other locations that need the same fix?
-5. Style - Does it follow project conventions?
+Review this code change. Check for:
+1. Correctness - Does it do what it claims?
+2. Bugs - Logic errors, edge cases?
+3. Security - Any issues?
+4. Completeness - Missing locations that need same fix?
 
-Categorize findings as:
-- Critical: Will break production or has security issues
-- Important: Logic errors, incomplete fixes, missing edge cases
-- Minor: Style, naming, small improvements
-
-Be specific with file paths and line numbers.
+Categorize as Critical/Important/Minor. Be specific with file paths and line numbers.
 """
 
 [[steps]]
@@ -145,7 +141,7 @@ CRITICAL RULES:
 name = "comment"
 depends_on = ["synthesize"]
 shell = """
-gh pr comment {{ arg.1 }} --body "## lok Review (Claude + Codex consensus)
+gh pr comment {{ arg.1 }} --body "## lok Review ({{ workflow.backends }} consensus)
 
 ### Verdict: {{ steps.synthesize.verdict }}
 
