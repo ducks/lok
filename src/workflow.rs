@@ -621,9 +621,7 @@ fn extract_json_field(text: &str, field: &str) -> Option<String> {
 fn sanitize_json_strings(json: &str) -> String {
     let mut result = String::with_capacity(json.len());
     let mut in_string = false;
-    let mut chars = json.chars().peekable();
-
-    while let Some(c) = chars.next() {
+    for c in json.chars() {
         if c == '"' && !result.ends_with('\\') {
             in_string = !in_string;
             result.push(c);
