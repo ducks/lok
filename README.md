@@ -22,11 +22,23 @@ specialized backends). The human provides oversight.
 ## Quick Start
 
 ```bash
-cargo install lokomotiv
+cargo install lokomotiv      # Package is "lokomotiv", binary is "lok"
 
-lok doctor                    # Check what backends are available
-lok ask "Explain this code"   # Query all available backends
-lok hunt .                    # Find bugs in current directory
+lok doctor                   # Check what backends are available
+lok ask "Explain this code"  # Query all available backends
+lok hunt .                   # Find bugs in current directory
+```
+
+Example `lok doctor` output when backends are configured:
+
+```
+Checking backends...
+
+  ✓ codex - ready
+  ✓ gemini - ready
+  ✓ claude - ready
+
+✓ 3 backend(s) ready.
 ```
 
 ## Prerequisites
