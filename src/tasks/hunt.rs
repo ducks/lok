@@ -199,10 +199,18 @@ async fn create_issues_with_backend(
         }
     }
 
-    // Create issues
+    // Create issues (skip if similar issue already exists)
     let mut created = 0;
+    let mut skipped = 0;
     for finding in &findings {
         print!("Creating issue: {}... ", finding.title);
+
+        // Check if similar issue already exists
+        if issue_exists(dir, backend, &finding.title) {
+            println!("{}", "skipped (similar issue exists)".yellow());
+            skipped += 1;
+            continue;
+        }
 
         let result = create_issue(dir, backend, &finding.title, &finding.body)?;
 
@@ -215,7 +223,16 @@ async fn create_issues_with_backend(
     }
 
     println!();
-    println!("{} Created {} issues", "✓".green(), created);
+    if skipped > 0 {
+        println!(
+            "{} Created {} issues, skipped {} duplicates",
+            "✓".green(),
+            created,
+            skipped
+        );
+    } else {
+        println!("{} Created {} issues", "✓".green(), created);
+    }
 
     Ok(())
 }
@@ -273,6 +290,60 @@ struct IssueResult {
     success: bool,
     url: String,
     error: String,
+}
+
+/// Check if an issue with a similar title already exists
+fn issue_exists(dir: &Path, backend: IssueBackend, title: &str) -> bool {
+    // Search for issues with similar titles
+    let output = match backend {
+        IssueBackend::GitHub => Command::new("gh")
+            .args([
+                "issue",
+                "list",
+                "--search",
+                &format!("{} in:title", title),
+                "--json",
+                "title",
+                "--limit",
+                "10",
+            ])
+            .current_dir(dir)
+            .output(),
+        IssueBackend::GitLab => Command::new("glab")
+            .args(["issue", "list", "--search", title, "--per-page", "10"])
+            .current_dir(dir)
+            .output(),
+    };
+
+    let Ok(output) = output else {
+        return false;
+    };
+
+    if !output.status.success() {
+        return false;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // For GitHub, parse JSON and check for exact or similar title matches
+    if matches!(backend, IssueBackend::GitHub) {
+        if let Ok(issues) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
+            let title_lower = title.to_lowercase();
+            return issues.iter().any(|issue| {
+                issue
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .map(|t| {
+                        t.to_lowercase().contains(&title_lower)
+                            || title_lower.contains(&t.to_lowercase())
+                    })
+                    .unwrap_or(false)
+            });
+        }
+    }
+
+    // For GitLab, just check if output contains the title
+    stdout.to_lowercase().contains(&title.to_lowercase())
 }
 
 fn create_issue(dir: &Path, backend: IssueBackend, title: &str, body: &str) -> Result<IssueResult> {
