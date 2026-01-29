@@ -125,7 +125,7 @@ pub async fn run_query_with_config(
     pb.set_style(
         ProgressStyle::default_bar()
             .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
-            .unwrap()
+            .expect("hardcoded progress bar template should be valid")
             .progress_chars("#>-"),
     );
 
