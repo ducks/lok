@@ -4,6 +4,7 @@ use crate::context::CodebaseContext;
 use crate::output;
 use anyhow::{Context, Result};
 use colored::Colorize;
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::Command;
 
@@ -396,6 +397,7 @@ struct Finding {
 
 fn parse_findings(results: &[QueryResult]) -> Vec<Finding> {
     let mut findings = Vec::new();
+    let mut seen_titles: HashSet<String> = HashSet::new();
 
     for result in results {
         if !result.success {
@@ -423,14 +425,17 @@ fn parse_findings(results: &[QueryResult]) -> Vec<Finding> {
                     // Save previous finding if exists
                     if let Some((title, body_lines)) = current_finding.take() {
                         if !title.is_empty() {
-                            findings.push(Finding {
+                            let finding = Finding {
                                 title: truncate_title(&title),
                                 body: format!(
                                     "Found by `lok hunt`:\n\n{}\n\n---\n*Backend: {}*",
                                     body_lines.join("\n"),
                                     result.backend
                                 ),
-                            });
+                            };
+                            if seen_titles.insert(finding.title.clone()) {
+                                findings.push(finding);
+                            }
                         }
                     }
 
@@ -455,21 +460,20 @@ fn parse_findings(results: &[QueryResult]) -> Vec<Finding> {
         // Don't forget the last finding
         if let Some((title, body_lines)) = current_finding {
             if !title.is_empty() {
-                findings.push(Finding {
+                let finding = Finding {
                     title: truncate_title(&title),
                     body: format!(
                         "Found by `lok hunt`:\n\n{}\n\n---\n*Backend: {}*",
                         body_lines.join("\n"),
                         result.backend
                     ),
-                });
+                };
+                if seen_titles.insert(finding.title.clone()) {
+                    findings.push(finding);
+                }
             }
         }
     }
-
-    // Dedupe by title
-    findings.sort_by(|a, b| a.title.cmp(&b.title));
-    findings.dedup_by(|a, b| a.title == b.title);
 
     findings
 }
