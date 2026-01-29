@@ -843,7 +843,18 @@ fn load_workflows_from_dir(dir: &Path) -> Result<Vec<(PathBuf, Workflow)>> {
     let mut workflows = Vec::new();
 
     for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!(
+                    "{} Failed to read directory entry in {}: {}",
+                    "warning:".yellow(),
+                    dir.display(),
+                    e
+                );
+                continue;
+            }
+        };
         let path = entry.path();
 
         if path.extension().map(|e| e == "toml").unwrap_or(false) {
