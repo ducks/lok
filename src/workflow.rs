@@ -82,6 +82,19 @@ static WORKFLOW_BACKENDS_RE: LazyLock<regex::Regex> =
 static UNKNOWN_VAR_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\{\{\s*([^}]+)\s*\}\}").unwrap());
 
+/// Placeholder for escaped braces - uses a pattern unlikely to appear in real content
+const ESCAPED_OPEN_BRACE: &str = "\x00LOK_OPEN_BRACE\x00";
+
+/// Escape {{ in content so it won't be treated as a variable reference
+fn escape_braces(s: &str) -> String {
+    s.replace("{{", ESCAPED_OPEN_BRACE)
+}
+
+/// Restore escaped braces after interpolation is complete
+fn unescape_braces(s: &str) -> String {
+    s.replace(ESCAPED_OPEN_BRACE, "{{")
+}
+
 /// A file edit to apply
 #[derive(Debug, Deserialize, Clone)]
 pub struct FileEdit {
@@ -607,6 +620,7 @@ impl WorkflowRunner {
     /// Interpolate {{ steps.X.output }} variables in a string
     ///
     /// Uses replace_all for O(n) complexity instead of O(n*m) with repeated replace()
+    /// Step outputs are escaped to prevent their content from being treated as variables.
     fn interpolate(
         &self,
         template: &str,
@@ -627,10 +641,14 @@ impl WorkflowRunner {
         }
 
         // Second pass: replace all in one pass (O(n) instead of O(n*m))
+        // Escape {{ in step outputs so they don't get treated as variables
         let output = INTERPOLATE_RE
             .replace_all(template, |caps: &regex::Captures| {
                 let step = &caps[1];
-                results.get(step).map(|r| r.output.as_str()).unwrap_or("")
+                results
+                    .get(step)
+                    .map(|r| escape_braces(&r.output))
+                    .unwrap_or_default()
             })
             .into_owned();
 
@@ -762,7 +780,8 @@ impl WorkflowRunner {
             });
         }
 
-        Ok(output)
+        // Restore escaped braces from step outputs
+        Ok(unescape_braces(&output))
     }
 }
 
