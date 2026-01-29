@@ -43,10 +43,13 @@ These PRs are already open (skip issues they reference):
 
 Pick the ONE issue that:
 1. Does NOT already have an open PR (check PR titles/bodies for "Closes #N" or "issue N")
-2. Is clearly defined (not vague or sprawling)
-3. Can be fixed with a focused code change
-4. Won't require major refactoring
-5. Has the highest impact-to-effort ratio
+2. Has the highest priority label (P0 > P1 > P2 > P3 > unlabeled)
+3. Is clearly defined (not vague or sprawling)
+4. Can be fixed with a focused code change
+5. Won't require major refactoring
+
+PRIORITY ORDER: Always prefer P0 issues first, then P1, then P2, etc.
+Look at the "labels" field in each issue - pick from highest priority that meets criteria.
 
 Output JSON:
 {
