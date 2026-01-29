@@ -1,118 +1,136 @@
 # Lok
 
-Orchestration layer for multiple LLM backends.
+Orchestration layer for multiple LLM backends. Run it in your project directory
+and it coordinates multiple LLMs to analyze your code, find bugs, and propose fixes.
 
-## The Big Idea
+## How It Works
 
-You're already in Claude Code (or Cursor, or Copilot). Instead of switching
-tools, let your LLM call other LLMs:
+An agentic LLM (Claude Code, Gemini CLI, etc.) acts as the conductor, running
+lok commands and implementing the results.
 
 ```
-You: Find performance issues in this codebase
-Claude: [runs: lok ask -b codex "Find N+1 queries"]
-Claude: Found 3 issues. Let me verify with another backend...
-Claude: [runs: lok ask -b gemini "Review these findings"]
+1. Conductor:      Runs lok run fix 123
+2. Lok analyzes:   Fetches issue, queries Claude + Codex, synthesizes proposals
+3. Lok comments:   Posts consensus proposal to the GitHub issue
+4. Conductor:      Reads the proposal, implements the fix, pushes a PR
+5. Human:          Reviews and approves
 ```
 
-Your LLM becomes the conductor. Lok is just the orchestra.
-
-## What Can It Do?
-
-Lok found 25 bugs in its own codebase, then found a real bug in Discourse
-(35k stars) that's now a merged PR. Here's how:
-
-```bash
-lok hunt .                    # Find bugs with multiple backends
-lok hunt --issues -y          # Find bugs AND create GitHub issues
-
-lok fix 123                   # Analyze a GitHub issue
-lok ci 123                    # Analyze CI failures
-lok pr 123                    # Review a pull request
-
-lok run full-heal             # Autonomous: hunt → fix → PR → review → merge
-```
-
-## Installation
-
-```bash
-cargo install lokomotiv
-```
-
-Prerequisites: Install the LLM CLIs you want to use (codex, gemini, ollama, etc.)
+The conductor is the brain (an agentic LLM). Lok is the orchestra (multiple
+specialized backends). The human provides oversight.
 
 ## Quick Start
 
 ```bash
-lok doctor                    # Check what's working
-lok ask "Explain this codebase"
-lok hunt .                    # Bug hunt
-lok audit .                   # Security audit
+cargo install lokomotiv
+
+lok doctor                    # Check what backends are available
+lok ask "Explain this code"   # Query all available backends
+lok hunt .                    # Find bugs in current directory
 ```
 
-## All The Modes
+## Prerequisites
 
-### Direct Query
+Lok wraps existing LLM CLI tools. Install the ones you want to use:
 
-Ask one or more backends:
+| Backend | Install | Notes |
+|---------|---------|-------|
+| Codex | `npm install -g @openai/codex` | Fast code analysis |
+| Gemini | `npm install -g @google/gemini-cli` | Deep security audits |
+| Claude | [claude.ai/download](https://claude.ai/download) | Claude Code CLI |
+| Ollama | [ollama.ai](https://ollama.ai) | Local models, no API keys |
+
+Run `lok doctor` to see which backends are detected.
+
+## Commands
+
+### Analysis
 
 ```bash
-lok ask "Find N+1 queries"                    # All backends
-lok ask -b codex "Find dead code"             # Specific backend
-lok ask -b codex,gemini "Review this code"    # Multiple backends
+lok ask "Find N+1 queries"              # Query all backends
+lok ask -b codex "Find dead code"       # Specific backend
+lok hunt .                              # Bug hunt (multiple prompts)
+lok hunt --issues                       # Bug hunt + create GitHub issues
+lok audit .                             # Security audit
+lok explain                             # Explain codebase structure
 ```
 
-### Debate Mode
-
-Have backends argue and refine answers:
+### Code Review
 
 ```bash
-lok debate "What's the best way to handle auth?"
-lok debate --rounds 3 "Should we use async here?"
+lok diff                                # Review staged changes
+lok diff main..HEAD                     # Review branch vs main
+lok run review-pr 123                   # Multi-backend PR review + comment
 ```
 
-Each backend sees previous responses and can challenge or build on them.
-
-### Spawn Mode
-
-Break a task into parallel subtasks:
+### Issue Management
 
 ```bash
-lok spawn "Build a REST API with tests"
+lok run fix 123                         # Analyze issue, propose fix, comment
+lok ci 123                              # Analyze CI failures
+```
+
+### Multi-Agent Modes
+
+```bash
+lok debate "Should we use async here?"  # Backends argue and refine
+lok spawn "Build a REST API"            # Break into parallel subtasks
+lok conduct "Find and fix perf issues"  # Fully autonomous
 ```
 
 ### Workflows
 
-Define multi-step pipelines in TOML:
-
 ```bash
-lok run security-review       # Run a workflow
-lok workflow list             # List available workflows
+lok run workflow-name                   # Run a workflow
+lok workflow list                       # List available workflows
 ```
 
+### Utilities
+
+```bash
+lok doctor                              # Check installation
+lok backends                            # List configured backends
+lok suggest "task"                      # Suggest best backend for task
+lok init                                # Create config file
+```
+
+## Workflows
+
+Workflows are TOML files that define multi-step LLM pipelines. Steps can depend
+on previous steps and run in parallel when possible.
+
 ```toml
+# .lok/workflows/example.toml
+name = "example"
+
 [[steps]]
 name = "scan"
 backend = "codex"
-prompt = "Find obvious issues"
+prompt = "Find obvious issues in this codebase"
 
 [[steps]]
-name = "investigate"
+name = "deep-dive"
 backend = "gemini"
 depends_on = ["scan"]
-prompt = "Investigate: {{ steps.scan.output }}"
+prompt = "Investigate these findings: {{ steps.scan.output }}"
 
 [[steps]]
-name = "summarize"
-backend = "ollama"
-depends_on = ["scan", "investigate"]
-prompt = "Prioritize findings..."
+name = "comment"
+depends_on = ["deep-dive"]
+shell = "gh issue comment 123 --body '{{ steps.deep-dive.output }}'"
 ```
 
-Steps without dependencies run in parallel.
+### Built-in Workflows
 
-### Agentic Workflows
+| Workflow | Description |
+|----------|-------------|
+| `fix` | Analyze issue with multiple backends, post proposal |
+| `review-pr` | Multi-backend PR review with consensus verdict |
+| `full-heal` | Autonomous: hunt bugs, fix, PR, review, merge |
 
-Workflows can run shell commands and apply code edits:
+### Agentic Features
+
+Workflows can apply code edits and verify them:
 
 ```toml
 [[steps]]
@@ -122,53 +140,14 @@ apply_edits = true
 verify = "cargo build"
 prompt = """
 Fix this issue. Output JSON:
-{"edits": [{"file": "src/main.rs", "old": "...", "new": "..."}], "summary": "..."}
+{"edits": [{"file": "src/main.rs", "old": "...", "new": "..."}]}
 """
-
-[[steps]]
-name = "commit"
-shell = "git add -A && git commit -m '{{ steps.fix.summary }}'"
-depends_on = ["fix"]
 ```
-
-See `examples/workflows/full-heal.toml` for the complete autonomous loop.
-
-### Code Review
-
-```bash
-lok diff                      # Review staged changes
-lok diff main..HEAD           # Review branch vs main
-lok pr 123                    # Review GitHub PR
-```
-
-### Conductor Mode
-
-Let an LLM orchestrate everything:
-
-```bash
-lok conduct "Find and fix performance issues"
-```
-
-### Explain Mode
-
-```bash
-lok explain                   # Explain current directory
-lok explain --focus auth      # Focus on specific aspect
-```
-
-## Backend Strengths
-
-| Backend | Best For | Speed |
-|---------|----------|-------|
-| codex | Code patterns, N+1, dead code | Fast |
-| gemini | Security audits, deep analysis | Slow (thorough) |
-| claude | Orchestration, reasoning | Medium |
-| ollama | Local/private, no rate limits | Varies |
-| bedrock | AWS-native deployments | Medium |
 
 ## Configuration
 
-Works without config. For customization: `lok.toml` or `~/.config/lok/lok.toml`
+Works without config. For customization, create `lok.toml` or
+`~/.config/lok/lok.toml`:
 
 ```toml
 [defaults]
@@ -185,48 +164,27 @@ enabled = true
 command = "http://localhost:11434"
 model = "qwen2.5-coder:7b"
 
-[tasks.hunt]
-description = "Find bugs"
-backends = ["codex"]
-prompts = [
-  { name = "errors", prompt = "Find error handling issues..." },
-]
+[cache]
+enabled = true
+ttl_hours = 24
 ```
 
-## Commands
+## Backend Strengths
+
+| Backend | Best For | Speed |
+|---------|----------|-------|
+| Codex | Code patterns, N+1, dead code | Fast |
+| Gemini | Security audits, deep analysis | Slow (thorough) |
+| Claude | Orchestration, reasoning | Medium |
+| Ollama | Local/private, no rate limits | Varies |
+
+## Real World Results
+
+Lok found 25 bugs in its own codebase, then found a real bug in Discourse
+(35k stars) that became a merged PR.
 
 ```bash
-# Querying
-lok ask "prompt"              # Query all backends
-lok ask -b codex "prompt"     # Specific backend
-
-# Multi-agent modes
-lok debate "question"         # Backends debate each other
-lok spawn "task"              # Parallel subtask agents
-lok conduct "task"            # Fully autonomous
-
-# Code review
-lok diff                      # Review staged changes
-lok pr 123                    # Review GitHub PR
-lok ci 123                    # Analyze CI failures
-
-# Issue analysis
-lok fix 123                   # Analyze GitHub issue
-
-# Codebase analysis
-lok explain                   # Explain codebase
-lok hunt .                    # Bug hunt
-lok audit .                   # Security audit
-
-# Workflows
-lok run workflow-name         # Run a workflow
-lok workflow list             # List workflows
-
-# Utilities
-lok suggest "task"            # Suggest best backend
-lok backends                  # List backends
-lok doctor                    # Check installation
-lok init                      # Create config file
+lok hunt ~/dev/discourse --issues -y    # Found hardlink limit bug
 ```
 
 ## Why "Lok"?
