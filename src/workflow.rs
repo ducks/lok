@@ -44,6 +44,12 @@ pub enum WorkflowError {
         step: String,
         variable: String,
     },
+
+    #[error("Workflow '{workflow}': duplicate step names: {}\n  hint: each step must have a unique name", duplicates.join(", "))]
+    DuplicateStepNames {
+        workflow: String,
+        duplicates: Vec<String>,
+    },
 }
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
@@ -529,6 +535,24 @@ impl WorkflowRunner {
     /// Group steps by depth level for parallel execution
     /// Depth 0 = no dependencies, Depth N = depends on steps at depth < N
     fn group_by_depth(&self, steps: &[Step], workflow_name: &str) -> Result<Vec<Vec<String>>> {
+        // Validate no duplicate step names (HashMap would silently overwrite)
+        let mut seen: HashMap<&str, usize> = HashMap::new();
+        for step in steps {
+            *seen.entry(step.name.as_str()).or_insert(0) += 1;
+        }
+        let duplicates: Vec<String> = seen
+            .into_iter()
+            .filter(|(_, count)| *count > 1)
+            .map(|(name, _)| name.to_string())
+            .collect();
+        if !duplicates.is_empty() {
+            return Err(WorkflowError::DuplicateStepNames {
+                workflow: workflow_name.to_string(),
+                duplicates,
+            }
+            .into());
+        }
+
         // Build step lookup map for O(1) access instead of O(n) linear scans
         let step_map: HashMap<&str, &Step> = steps.iter().map(|s| (s.name.as_str(), s)).collect();
 
@@ -1303,5 +1327,49 @@ line2"}"#;
         // Verify it parses after sanitization
         let result: serde_json::Value = serde_json::from_str(&sanitized).unwrap();
         assert_eq!(result["msg"], "line1\nline2");
+    }
+
+    #[test]
+    fn test_duplicate_step_names_error() {
+        let steps = vec![
+            Step {
+                name: "fetch".to_string(),
+                backend: String::new(),
+                prompt: String::new(),
+                depends_on: vec![],
+                when: None,
+                shell: Some("echo test".to_string()),
+                apply_edits: false,
+                verify: None,
+            },
+            Step {
+                name: "fetch".to_string(), // duplicate!
+                backend: String::new(),
+                prompt: String::new(),
+                depends_on: vec![],
+                when: None,
+                shell: Some("echo test2".to_string()),
+                apply_edits: false,
+                verify: None,
+            },
+        ];
+
+        let config = crate::config::Config::default();
+        let runner = WorkflowRunner::new(config, std::path::PathBuf::from("/tmp"), vec![]);
+        let result = runner.group_by_depth(&steps, "test-workflow");
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("duplicate step names"),
+            "Expected duplicate step names error, got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("fetch"),
+            "Expected 'fetch' in error, got: {}",
+            err_msg
+        );
     }
 }
