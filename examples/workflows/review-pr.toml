@@ -78,48 +78,17 @@ Be specific with file paths and line numbers.
 """
 
 [[steps]]
-name = "review_gemini"
-backend = "gemini"
-depends_on = ["fetch-meta", "fetch-diff"]
-prompt = """
-You are reviewing PR #{{ arg.1 }}.
-
-## PR Metadata
-{{ steps.fetch-meta.output }}
-
-## Code Changes
-{{ steps.fetch-diff.output }}
-
-Perform a thorough code review. Check for:
-1. Correctness - Does the code do what it claims?
-2. Bugs - Are there any logic errors, edge cases, or potential crashes?
-3. Security - Any security issues (injection, unsafe operations)?
-4. Completeness - Are there other locations that need the same fix?
-5. Style - Does it follow project conventions?
-
-Categorize findings as:
-- Critical: Will break production or has security issues
-- Important: Logic errors, incomplete fixes, missing edge cases
-- Minor: Style, naming, small improvements
-
-Be specific with file paths and line numbers.
-"""
-
-[[steps]]
 name = "synthesize"
 backend = "claude"
-depends_on = ["review_claude", "review_codex", "review_gemini"]
+depends_on = ["review_claude", "review_codex"]
 prompt = """
-Three backends reviewed PR #{{ arg.1 }}. Synthesize their findings into a consensus.
+Two backends reviewed PR #{{ arg.1 }}. Synthesize their findings into a consensus.
 
 CLAUDE review:
 {{ steps.review_claude.output }}
 
 CODEX review:
 {{ steps.review_codex.output }}
-
-GEMINI review:
-{{ steps.review_gemini.output }}
 
 Analyze the reviews and output JSON. Here is the EXACT format to use:
 
