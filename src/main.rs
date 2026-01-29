@@ -1467,12 +1467,12 @@ fn parse_pr_identifier(pr: &str, repo: Option<&str>) -> Result<(String, String)>
         }
 
         // GitLab: https://gitlab.com/owner/repo/-/merge_requests/123[/diffs]
+        // Or with subgroups: https://gitlab.com/group/subgroup/repo/-/merge_requests/123
+        // Legacy format (rare): https://gitlab.com/owner/repo/merge_requests/123
         // Parts after filter: ["https:", "gitlab.com", "owner", "repo", "-", "merge_requests", "123"]
         if is_gitlab {
             if let Some(mr_pos) = parts.iter().position(|&s| s == "merge_requests") {
-                if mr_pos >= 5 && mr_pos + 1 < parts.len() {
-                    let owner = parts[mr_pos - 3];
-                    let repo = parts[mr_pos - 2];
+                if mr_pos >= 4 && mr_pos + 1 < parts.len() {
                     let number_str = parts[mr_pos + 1];
 
                     // Validate MR number is numeric
@@ -1483,7 +1483,24 @@ fn parse_pr_identifier(pr: &str, repo: Option<&str>) -> Result<(String, String)>
                         ));
                     }
 
-                    return Ok((format!("{}/{}", owner, repo), number_str.to_string()));
+                    // Build namespace: everything between host (index 1) and merge_requests marker
+                    // Skip the "-" separator if present
+                    let namespace_end = if parts.get(mr_pos - 1) == Some(&"-") {
+                        mr_pos - 1
+                    } else {
+                        mr_pos
+                    };
+
+                    // Namespace starts at index 2 (after "https:" and "gitlab.com")
+                    let namespace = parts[2..namespace_end].join("/");
+
+                    if namespace.is_empty() || !namespace.contains('/') {
+                        return Err(anyhow::anyhow!(
+                            "Invalid GitLab URL: could not extract project path"
+                        ));
+                    }
+
+                    return Ok((namespace, number_str.to_string()));
                 }
             }
         }
