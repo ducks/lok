@@ -11,7 +11,7 @@
 
 use crate::backend;
 use crate::config::Config;
-use crate::context::{resolve_verify_command, CodebaseContext};
+use crate::context::{resolve_format_command, resolve_verify_command, CodebaseContext};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use futures::future::join_all;
@@ -113,6 +113,15 @@ pub struct StepResult {
     pub elapsed_ms: u64,
 }
 
+/// Prepared step ready for execution
+struct PreparedStep<'a> {
+    step: &'a Step,
+    prompt: String,
+    shell: Option<String>,
+    format: Option<String>,
+    verify: Option<String>,
+}
+
 /// Workflow executor
 pub struct WorkflowRunner {
     config: Config,
@@ -167,8 +176,7 @@ impl WorkflowRunner {
             }
 
             // Collect steps to run at this depth
-            // (step, prompt, shell_cmd, verify_cmd)
-            let mut steps_to_run: Vec<(&Step, String, Option<String>, Option<String>)> = Vec::new();
+            let mut steps_to_run: Vec<PreparedStep> = Vec::new();
 
             for step_name in step_names {
                 let step = *step_map
@@ -193,12 +201,22 @@ impl WorkflowRunner {
                     .shell
                     .as_ref()
                     .map(|s| self.interpolate_with_fields(s, &results));
-                let verify = step
+                // When verify is set, also resolve format command to run first
+                let verify_value = step
                     .verify
                     .as_ref()
-                    .map(|v| self.interpolate_with_fields(v, &results))
-                    .and_then(|v| resolve_verify_command(&v, &self.context));
-                steps_to_run.push((step, prompt, shell, verify));
+                    .map(|v| self.interpolate_with_fields(v, &results));
+                let format = verify_value
+                    .as_ref()
+                    .and_then(|v| resolve_format_command(v, &self.context));
+                let verify = verify_value.and_then(|v| resolve_verify_command(&v, &self.context));
+                steps_to_run.push(PreparedStep {
+                    step,
+                    prompt,
+                    shell,
+                    format,
+                    verify,
+                });
             }
 
             if steps_to_run.is_empty() {
@@ -208,7 +226,14 @@ impl WorkflowRunner {
             // Execute steps at this depth in parallel
             let futures: Vec<_> = steps_to_run
                 .into_iter()
-                .map(|(step, prompt, shell, verify)| {
+                .map(|prepared| {
+                    let PreparedStep {
+                        step,
+                        prompt,
+                        shell,
+                        format,
+                        verify,
+                    } = prepared;
                     let config = self.config.clone();
                     let cwd = self.cwd.clone();
                     let step_name = step.name.clone();
@@ -346,6 +371,24 @@ impl WorkflowRunner {
                                                 success: false,
                                                 elapsed_ms,
                                             };
+                                        }
+                                    }
+                                }
+
+                                // Run format before verify if requested
+                                if let Some(ref format_cmd) = format {
+                                    println!("  {} {}", "format:".dimmed(), format_cmd.dimmed());
+                                    match run_shell(format_cmd, &cwd) {
+                                        Ok(_) => {
+                                            println!("    {} Format complete", "✓".green());
+                                        }
+                                        Err(e) => {
+                                            println!(
+                                                "    {} Format failed: {}",
+                                                "✗".red(),
+                                                e
+                                            );
+                                            // Format failure is not fatal, continue to verify
                                         }
                                     }
                                 }
