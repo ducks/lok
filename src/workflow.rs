@@ -1031,8 +1031,7 @@ pub fn list_workflows() -> Result<Vec<(PathBuf, Workflow)>> {
 fn load_workflows_from_dir(dir: &Path) -> Result<Vec<(PathBuf, Workflow)>> {
     let mut workflows = Vec::new();
 
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    for entry in std::fs::read_dir(dir)?.flatten() {
         let path = entry.path();
 
         if path.extension().map(|e| e == "toml").unwrap_or(false) {
