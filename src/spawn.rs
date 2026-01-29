@@ -36,7 +36,7 @@ impl Spawn {
     pub fn new(config: &Config, cwd: &Path) -> Result<Self> {
         Ok(Self {
             config: config.clone(),
-            cwd: cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
+            cwd: crate::utils::canonicalize_or_warn(cwd),
             delegator: Delegator::new(),
         })
     }
