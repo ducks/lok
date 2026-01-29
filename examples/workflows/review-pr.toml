@@ -78,17 +78,44 @@ Be specific with file paths and line numbers.
 """
 
 [[steps]]
+name = "review_gemini"
+backend = "gemini"
+depends_on = ["fetch-meta", "fetch-diff"]
+prompt = """
+IMPORTANT: Be concise and direct. Do NOT make any tool calls. Do NOT investigate or read files. Work ONLY with the context provided below. Limit your response to 300 words.
+
+You are reviewing PR #{{ arg.1 }}.
+
+## PR Metadata
+{{ steps.fetch-meta.output }}
+
+## Code Changes
+{{ steps.fetch-diff.output }}
+
+Review this code change. Check for:
+1. Correctness - Does it do what it claims?
+2. Bugs - Logic errors, edge cases?
+3. Security - Any issues?
+4. Completeness - Missing locations that need same fix?
+
+Categorize as Critical/Important/Minor. Be specific with file paths and line numbers.
+"""
+
+[[steps]]
 name = "synthesize"
 backend = "claude"
-depends_on = ["review_claude", "review_codex"]
+depends_on = ["review_claude", "review_codex", "review_gemini"]
 prompt = """
-Two backends reviewed PR #{{ arg.1 }}. Synthesize their findings into a consensus.
+Three backends reviewed PR #{{ arg.1 }}. Synthesize their findings into a consensus.
 
 CLAUDE review:
 {{ steps.review_claude.output }}
 
 CODEX review:
 {{ steps.review_codex.output }}
+
+GEMINI review:
+{{ steps.review_gemini.output }}
 
 Analyze the reviews and output JSON. Here is the EXACT format to use:
 
@@ -114,7 +141,7 @@ CRITICAL RULES:
 name = "comment"
 depends_on = ["synthesize"]
 shell = """
-gh pr comment {{ arg.1 }} --body "## lok Review (Claude + Codex consensus)
+gh pr comment {{ arg.1 }} --body "## lok Review ({{ workflow.backends }} consensus)
 
 ### Verdict: {{ steps.synthesize.verdict }}
 
