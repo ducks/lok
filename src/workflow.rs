@@ -201,10 +201,56 @@ pub struct Step {
     /// Examples: "steps.plan.output" or '["a", "b", "c"]'
     #[serde(default)]
     pub for_each: Option<String>,
+
+    // Output parsing fields
+    /// How to parse the step output: "text" (default), "json", or "lines"
+    #[serde(default)]
+    pub output_format: Option<String>,
 }
 
 fn default_retry_delay() -> u64 {
     1000
+}
+
+/// Parse step output based on format
+fn parse_step_output(output: &str, format: Option<&str>) -> Option<serde_json::Value> {
+    match format {
+        Some("json") => {
+            // Try to parse as JSON, extracting from markdown code blocks if needed
+            // Check which bracket comes first to determine extraction order
+            let array_pos = output.find('[');
+            let object_pos = output.find('{');
+
+            let json_str = match (array_pos, object_pos) {
+                (Some(a), Some(o)) if a < o => {
+                    // Array comes first, try array extraction first
+                    extract_json_array_from_text(output).or_else(|| extract_json_from_text(output))
+                }
+                (Some(_), None) => extract_json_array_from_text(output),
+                (None, Some(_)) => extract_json_from_text(output),
+                _ => {
+                    // Object comes first or neither found
+                    extract_json_from_text(output).or_else(|| extract_json_array_from_text(output))
+                }
+            };
+
+            if let Some(json_str) = json_str {
+                serde_json::from_str(&json_str).ok()
+            } else {
+                // Try direct parse
+                serde_json::from_str(output).ok()
+            }
+        }
+        Some("lines") => {
+            // Split into array of lines
+            let lines: Vec<serde_json::Value> = output
+                .lines()
+                .map(|s| serde_json::Value::String(s.to_string()))
+                .collect();
+            Some(serde_json::Value::Array(lines))
+        }
+        _ => None, // "text" or unspecified - no parsing
+    }
 }
 
 /// Result of executing a step
@@ -212,6 +258,8 @@ fn default_retry_delay() -> u64 {
 pub struct StepResult {
     pub name: String,
     pub output: String,
+    /// Parsed output when output_format is "json" or "lines"
+    pub parsed_output: Option<serde_json::Value>,
     pub success: bool,
     pub elapsed_ms: u64,
     pub backend: Option<String>,
@@ -225,6 +273,7 @@ struct PreparedStep<'a> {
     format: Option<String>,
     verify: Option<String>,
     for_each_items: Option<Vec<serde_json::Value>>,
+    output_format: Option<String>,
 }
 
 /// Workflow executor
@@ -338,6 +387,7 @@ impl WorkflowRunner {
                     format,
                     verify,
                     for_each_items,
+                    output_format: step.output_format.clone(),
                 });
             }
 
@@ -356,6 +406,7 @@ impl WorkflowRunner {
                         format,
                         verify,
                         for_each_items,
+                        output_format,
                     } = prepared;
                     let config = self.config.clone();
                     let cwd = self.cwd.clone();
@@ -480,6 +531,7 @@ impl WorkflowRunner {
                             return StepResult {
                                 name: step_name,
                                 output: output_json,
+                                parsed_output: None,
                                 success: all_success,
                                 elapsed_ms,
                                 backend: if shell.is_none() { Some(backend_name) } else { None },
@@ -512,9 +564,14 @@ impl WorkflowRunner {
                                             "✓".green(),
                                             elapsed_ms as f64 / 1000.0
                                         );
+                                        let parsed = parse_step_output(
+                                            &output,
+                                            output_format.as_deref(),
+                                        );
                                         return StepResult {
                                             name: step_name,
                                             output,
+                                            parsed_output: parsed,
                                             success: true,
                                             elapsed_ms,
                                             backend: None,
@@ -528,6 +585,7 @@ impl WorkflowRunner {
                                             return StepResult {
                                                 name: step_name,
                                                 output: format!("Error: {}", e),
+                                                parsed_output: None,
                                                 success: false,
                                                 elapsed_ms,
                                                 backend: None,
@@ -543,6 +601,7 @@ impl WorkflowRunner {
                             return StepResult {
                                 name: step_name,
                                 output: format!("Error: {}", last_error),
+                                parsed_output: None,
                                 success: false,
                                 elapsed_ms,
                                 backend: None,
@@ -556,6 +615,7 @@ impl WorkflowRunner {
                                 return StepResult {
                                     name: step_name,
                                     output: format!("Backend not found: {}", backend_name),
+                                    parsed_output: None,
                                     success: false,
                                     elapsed_ms: 0,
                                     backend: Some(backend_name),
@@ -569,6 +629,7 @@ impl WorkflowRunner {
                                 return StepResult {
                                     name: step_name,
                                     output: format!("Failed to create backend: {}", e),
+                                    parsed_output: None,
                                     success: false,
                                     elapsed_ms: 0,
                                     backend: Some(backend_name),
@@ -581,6 +642,7 @@ impl WorkflowRunner {
                             return StepResult {
                                 name: step_name,
                                 output: format!("Backend {} not available", backend_name),
+                                parsed_output: None,
                                 success: false,
                                 elapsed_ms: 0,
                                 backend: Some(backend_name),
@@ -619,6 +681,7 @@ impl WorkflowRunner {
                                         return StepResult {
                                             name: step_name,
                                             output: format!("Error: {}", e),
+                                            parsed_output: None,
                                             success: false,
                                             elapsed_ms,
                                             backend: Some(backend_name),
@@ -665,6 +728,7 @@ impl WorkflowRunner {
                                                                 "Edit failed: {}\n\nOriginal output:\n{}",
                                                                 e, text
                                                             ),
+                                                            parsed_output: None,
                                                             success: false,
                                                             elapsed_ms,
                                                             backend: Some(backend_name.clone()),
@@ -685,6 +749,7 @@ impl WorkflowRunner {
                                                     "Parse failed: {}\n\nOriginal output:\n{}",
                                                     e, text
                                                 ),
+                                                parsed_output: None,
                                                 success: false,
                                                 elapsed_ms,
                                                 backend: Some(backend_name.clone()),
@@ -730,6 +795,7 @@ impl WorkflowRunner {
                                                     "Verification failed: {}\n\nOriginal output:\n{}",
                                                     e, text
                                                 ),
+                                                parsed_output: None,
                                                 success: false,
                                                 elapsed_ms,
                                                 backend: Some(backend_name.clone()),
@@ -738,9 +804,14 @@ impl WorkflowRunner {
                                     }
                                 }
 
+                            let parsed = parse_step_output(
+                                &text,
+                                output_format.as_deref(),
+                            );
                             StepResult {
                                 name: step_name,
                                 output: text,
+                                parsed_output: parsed,
                                 success: true,
                                 elapsed_ms,
                                 backend: Some(backend_name),
@@ -750,6 +821,7 @@ impl WorkflowRunner {
                             StepResult {
                                 name: step_name,
                                 output: format!("Error: {}", last_error),
+                                parsed_output: None,
                                 success: false,
                                 elapsed_ms,
                                 backend: Some(backend_name),
@@ -1004,9 +1076,21 @@ impl WorkflowRunner {
                     // Already handled by interpolate(), return original match
                     caps[0].to_string()
                 } else {
+                    // Try parsed_output first if available, then fall back to string parsing
                     results
                         .get(step)
-                        .and_then(|r| extract_json_field(&r.output, field))
+                        .and_then(|r| {
+                            // Use parsed_output if available
+                            if let Some(ref parsed) = r.parsed_output {
+                                parsed.get(field).map(|v| match v {
+                                    serde_json::Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                })
+                            } else {
+                                // Fall back to parsing from string
+                                extract_json_field(&r.output, field)
+                            }
+                        })
                         .unwrap_or_else(|| format!("[field {} not found]", field))
                 }
             })
@@ -1140,6 +1224,20 @@ fn parse_for_each_array(
             .get(step_name)
             .ok_or_else(|| anyhow::anyhow!("for_each: step '{}' not found", step_name))?;
 
+        // If parsed_output is available and is an array, use it directly
+        if let Some(ref parsed) = step_result.parsed_output {
+            match parsed {
+                serde_json::Value::Array(arr) => return Ok(arr.clone()),
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "for_each: step '{}' parsed_output is not an array",
+                        step_name
+                    ))
+                }
+            }
+        }
+
+        // Fall back to string parsing for backwards compatibility
         // Try to extract JSON from the step output
         // For for_each, prefer array extraction since we expect an array
         // Check which comes first: [ or { to decide extraction order
@@ -1667,6 +1765,7 @@ mod tests {
             StepResult {
                 name: "synthesize".to_string(),
                 output: synthesize_output.to_string(),
+                parsed_output: None,
                 success: true,
                 elapsed_ms: 1000,
                 backend: Some("claude".to_string()),
@@ -1743,6 +1842,7 @@ line2"}"#;
                 retries: 0,
                 retry_delay: 1000,
                 for_each: None,
+                output_format: None,
             },
             Step {
                 name: "fetch".to_string(), // duplicate!
@@ -1756,6 +1856,7 @@ line2"}"#;
                 retries: 0,
                 retry_delay: 1000,
                 for_each: None,
+                output_format: None,
             },
         ];
 
@@ -1785,6 +1886,7 @@ line2"}"#;
             StepResult {
                 name: "analyze".to_string(),
                 output: "Found ISSUES_FOUND in the code. Multiple problems detected.".to_string(),
+                parsed_output: None,
                 success: true,
                 elapsed_ms: 100,
                 backend: Some("claude".to_string()),
@@ -1795,6 +1897,7 @@ line2"}"#;
             StepResult {
                 name: "check".to_string(),
                 output: "PASS".to_string(),
+                parsed_output: None,
                 success: true,
                 elapsed_ms: 50,
                 backend: Some("claude".to_string()),
@@ -1967,6 +2070,7 @@ line2"}"#;
             StepResult {
                 name: "plan".to_string(),
                 output: r#"["chunk1", "chunk2", "chunk3"]"#.to_string(),
+                parsed_output: None,
                 success: true,
                 elapsed_ms: 100,
                 backend: Some("claude".to_string()),
@@ -1989,6 +2093,7 @@ line2"}"#;
 [{"name": "tests", "pattern": "*.spec.rb"}, {"name": "frontend", "pattern": "*.js"}]
 ```"#
                     .to_string(),
+                parsed_output: None,
                 success: true,
                 elapsed_ms: 100,
                 backend: Some("claude".to_string()),
@@ -2023,6 +2128,7 @@ line2"}"#;
             StepResult {
                 name: "plan".to_string(),
                 output: r#"{"not": "an array"}"#.to_string(),
+                parsed_output: None,
                 success: true,
                 elapsed_ms: 100,
                 backend: Some("claude".to_string()),
@@ -2054,5 +2160,98 @@ line2"}"#;
         "#;
         let step: Step = toml::from_str(toml_str).unwrap();
         assert_eq!(step.for_each, Some(r#"["a", "b", "c"]"#.to_string()));
+    }
+
+    #[test]
+    fn test_output_format_toml_parsing() {
+        let toml_str = r#"
+            name = "get_issues"
+            shell = "gh issue list --json number,title"
+            output_format = "json"
+        "#;
+        let step: Step = toml::from_str(toml_str).unwrap();
+        assert_eq!(step.output_format, Some("json".to_string()));
+    }
+
+    #[test]
+    fn test_parse_step_output_json() {
+        let output = r#"[{"name": "test"}, {"name": "test2"}]"#;
+        let parsed = parse_step_output(output, Some("json"));
+        assert!(parsed.is_some());
+        let arr = parsed.unwrap();
+        assert!(arr.is_array());
+        assert_eq!(arr.as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_parse_step_output_lines() {
+        let output = "line1\nline2\nline3";
+        let parsed = parse_step_output(output, Some("lines"));
+        assert!(parsed.is_some());
+        let arr = parsed.unwrap();
+        assert!(arr.is_array());
+        let lines = arr.as_array().unwrap();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "line1");
+    }
+
+    #[test]
+    fn test_parse_step_output_text() {
+        let output = "just some text";
+        let parsed = parse_step_output(output, Some("text"));
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn test_parse_step_output_none() {
+        let output = "just some text";
+        let parsed = parse_step_output(output, None);
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn test_for_each_with_parsed_output() {
+        let mut results = HashMap::new();
+        let parsed_array = serde_json::json!([
+            {"name": "chunk1", "files": 5},
+            {"name": "chunk2", "files": 3}
+        ]);
+        results.insert(
+            "plan".to_string(),
+            StepResult {
+                name: "plan".to_string(),
+                output: "some raw output".to_string(),
+                parsed_output: Some(parsed_array),
+                success: true,
+                elapsed_ms: 100,
+                backend: Some("claude".to_string()),
+            },
+        );
+
+        // Should use parsed_output directly, not parse the raw output
+        let items = parse_for_each_array("steps.plan.output", &results).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["name"], "chunk1");
+        assert_eq!(items[1]["files"], 3);
+    }
+
+    #[test]
+    fn test_for_each_parsed_output_not_array() {
+        let mut results = HashMap::new();
+        let parsed_object = serde_json::json!({"not": "an array"});
+        results.insert(
+            "plan".to_string(),
+            StepResult {
+                name: "plan".to_string(),
+                output: "some raw output".to_string(),
+                parsed_output: Some(parsed_object),
+                success: true,
+                elapsed_ms: 100,
+                backend: Some("claude".to_string()),
+            },
+        );
+
+        let err = parse_for_each_array("steps.plan.output", &results).unwrap_err();
+        assert!(err.to_string().contains("not an array"));
     }
 }
