@@ -1393,15 +1393,7 @@ Be concise but thorough. A developer new to this codebase should understand the 
 fn parse_pr_identifier(pr: &str, repo: Option<&str>) -> Result<(String, String)> {
     use std::process::Command;
 
-    // Handle "owner/repo#123" format
-    if pr.contains('#') {
-        let parts: Vec<&str> = pr.splitn(2, '#').collect();
-        if parts.len() == 2 {
-            return Ok((parts[0].to_string(), parts[1].to_string()));
-        }
-    }
-
-    // Handle URL format
+    // Handle URL format first (URLs may contain # for fragments)
     if pr.starts_with("http://") || pr.starts_with("https://") {
         // Strip query params and fragments
         let url_clean = pr.split(['?', '#']).next().unwrap_or(pr);
@@ -1471,6 +1463,14 @@ fn parse_pr_identifier(pr: &str, repo: Option<&str>) -> Result<(String, String)>
         ));
     }
 
+    // Handle "owner/repo#123" format
+    if pr.contains('#') {
+        let parts: Vec<&str> = pr.splitn(2, '#').collect();
+        if parts.len() == 2 {
+            return Ok((parts[0].to_string(), parts[1].to_string()));
+        }
+    }
+
     // If repo is provided, use it
     if let Some(r) = repo {
         return Ok((r.to_string(), pr.to_string()));
@@ -1501,4 +1501,129 @@ fn parse_pr_identifier(pr: &str, repo: Option<&str>) -> Result<(String, String)>
     anyhow::bail!(
         "Could not determine repository. Use --repo owner/repo or run from within a git repo."
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_pr_github_standard() {
+        let (repo, pr) =
+            parse_pr_identifier("https://github.com/owner/repo/pull/123", None).unwrap();
+        assert_eq!(repo, "owner/repo");
+        assert_eq!(pr, "123");
+    }
+
+    #[test]
+    fn test_parse_pr_github_with_trailing_slash() {
+        let (repo, pr) =
+            parse_pr_identifier("https://github.com/owner/repo/pull/123/", None).unwrap();
+        assert_eq!(repo, "owner/repo");
+        assert_eq!(pr, "123");
+    }
+
+    #[test]
+    fn test_parse_pr_github_with_files_suffix() {
+        let (repo, pr) =
+            parse_pr_identifier("https://github.com/owner/repo/pull/123/files", None).unwrap();
+        assert_eq!(repo, "owner/repo");
+        assert_eq!(pr, "123");
+    }
+
+    #[test]
+    fn test_parse_pr_github_with_fragment() {
+        let (repo, pr) = parse_pr_identifier(
+            "https://github.com/owner/repo/pull/123#discussion_r123456",
+            None,
+        )
+        .unwrap();
+        assert_eq!(repo, "owner/repo");
+        assert_eq!(pr, "123");
+    }
+
+    #[test]
+    fn test_parse_pr_github_with_query_params() {
+        let (repo, pr) =
+            parse_pr_identifier("https://github.com/owner/repo/pull/123?w=1", None).unwrap();
+        assert_eq!(repo, "owner/repo");
+        assert_eq!(pr, "123");
+    }
+
+    #[test]
+    fn test_parse_pr_gitlab_standard() {
+        let (repo, pr) =
+            parse_pr_identifier("https://gitlab.com/owner/repo/-/merge_requests/456", None)
+                .unwrap();
+        assert_eq!(repo, "owner/repo");
+        assert_eq!(pr, "456");
+    }
+
+    #[test]
+    fn test_parse_pr_gitlab_with_diffs_suffix() {
+        let (repo, pr) = parse_pr_identifier(
+            "https://gitlab.com/owner/repo/-/merge_requests/456/diffs",
+            None,
+        )
+        .unwrap();
+        assert_eq!(repo, "owner/repo");
+        assert_eq!(pr, "456");
+    }
+
+    #[test]
+    fn test_parse_pr_gitlab_self_hosted() {
+        let (repo, pr) = parse_pr_identifier(
+            "https://gitlab.company.com/owner/repo/-/merge_requests/789",
+            None,
+        )
+        .unwrap();
+        assert_eq!(repo, "owner/repo");
+        assert_eq!(pr, "789");
+    }
+
+    #[test]
+    fn test_parse_pr_owner_repo_hash_format() {
+        let (repo, pr) = parse_pr_identifier("owner/repo#123", None).unwrap();
+        assert_eq!(repo, "owner/repo");
+        assert_eq!(pr, "123");
+    }
+
+    #[test]
+    fn test_parse_pr_with_explicit_repo() {
+        let (repo, pr) = parse_pr_identifier("456", Some("explicit/repo")).unwrap();
+        assert_eq!(repo, "explicit/repo");
+        assert_eq!(pr, "456");
+    }
+
+    #[test]
+    fn test_parse_pr_invalid_host() {
+        let result = parse_pr_identifier("https://bitbucket.org/owner/repo/pull/123", None);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid PR URL host"));
+    }
+
+    #[test]
+    fn test_parse_pr_spoofed_host() {
+        let result = parse_pr_identifier("https://github.com.evil.com/owner/repo/pull/123", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_pr_non_numeric() {
+        let result = parse_pr_identifier("https://github.com/owner/repo/pull/abc", None);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not a valid number"));
+    }
+
+    #[test]
+    fn test_parse_pr_missing_pr_number() {
+        let result = parse_pr_identifier("https://github.com/owner/repo/pull/", None);
+        assert!(result.is_err());
+    }
 }
