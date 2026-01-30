@@ -62,10 +62,24 @@ use std::sync::LazyLock;
 static INTERPOLATE_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\{\{\s*steps\.([a-zA-Z0-9_-]+)\.output\s*\}\}").unwrap());
 
-/// Regex for matching "steps.X.output contains 'Y'" conditions
-static CONDITION_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+/// Regex for matching "steps.X.output contains 'Y'" conditions (legacy syntax)
+static CONDITION_LEGACY_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r#"steps\.([a-zA-Z0-9_-]+)\.output\s+contains\s+['"](.+)['"]"#).unwrap()
 });
+
+/// Regex for matching contains(step.output, "string") conditions
+static CONDITION_CONTAINS_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#"contains\(\s*([a-zA-Z0-9_-]+)\.output\s*,\s*['"](.+)['"]\s*\)"#).unwrap()
+});
+
+/// Regex for matching equals(step.output, "string") conditions
+static CONDITION_EQUALS_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#"equals\(\s*([a-zA-Z0-9_-]+)\.output\s*,\s*['"](.+)['"]\s*\)"#).unwrap()
+});
+
+/// Regex for matching not(...) conditions
+static CONDITION_NOT_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r#"not\(\s*(.+)\s*\)"#).unwrap());
 
 /// Regex for matching {{ steps.NAME.field }} patterns (for JSON field access)
 static FIELD_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
@@ -147,7 +161,8 @@ pub struct Step {
     #[serde(default)]
     pub depends_on: Vec<String>,
     /// Optional condition - step only runs if this evaluates true
-    #[serde(default)]
+    /// Supports both `when` and `if` in TOML (if takes precedence)
+    #[serde(default, alias = "if")]
     pub when: Option<String>,
 
     // Agentic fields
@@ -679,13 +694,44 @@ impl WorkflowRunner {
         Ok(output)
     }
 
-    /// Evaluate a simple condition like "steps.scan.output contains 'critical'"
+    /// Evaluate a condition expression
+    ///
+    /// Supported syntax:
+    /// - `contains(step.output, "string")` - true if step output contains string
+    /// - `equals(step.output, "string")` - true if step output equals string exactly
+    /// - `not(condition)` - negates the inner condition
+    /// - `steps.X.output contains 'Y'` - legacy syntax, still supported
     fn evaluate_condition(&self, condition: &str, results: &HashMap<String, StepResult>) -> bool {
-        // Simple parser for "steps.X.output contains 'Y'"
-        if let Some(caps) = CONDITION_RE.captures(condition) {
+        // Handle not(...) wrapper first
+        if let Some(caps) = CONDITION_NOT_RE.captures(condition) {
+            let inner = caps.get(1).unwrap().as_str().trim();
+            return !self.evaluate_condition(inner, results);
+        }
+
+        // Handle contains(step.output, "string")
+        if let Some(caps) = CONDITION_CONTAINS_RE.captures(condition) {
             let step_name = caps.get(1).unwrap().as_str();
             let search_str = caps.get(2).unwrap().as_str();
+            return results
+                .get(step_name)
+                .map(|r| r.output.contains(search_str))
+                .unwrap_or(false);
+        }
 
+        // Handle equals(step.output, "string")
+        if let Some(caps) = CONDITION_EQUALS_RE.captures(condition) {
+            let step_name = caps.get(1).unwrap().as_str();
+            let expected = caps.get(2).unwrap().as_str();
+            return results
+                .get(step_name)
+                .map(|r| r.output.trim() == expected)
+                .unwrap_or(false);
+        }
+
+        // Legacy syntax: "steps.X.output contains 'Y'"
+        if let Some(caps) = CONDITION_LEGACY_RE.captures(condition) {
+            let step_name = caps.get(1).unwrap().as_str();
+            let search_str = caps.get(2).unwrap().as_str();
             return results
                 .get(step_name)
                 .map(|r| r.output.contains(search_str))
@@ -1370,5 +1416,105 @@ line2"}"#;
             "Expected 'fetch' in error, got: {}",
             err_msg
         );
+    }
+
+    fn make_test_results() -> HashMap<String, StepResult> {
+        let mut results = HashMap::new();
+        results.insert(
+            "analyze".to_string(),
+            StepResult {
+                name: "analyze".to_string(),
+                output: "Found ISSUES_FOUND in the code. Multiple problems detected.".to_string(),
+                success: true,
+                elapsed_ms: 100,
+                backend: Some("claude".to_string()),
+            },
+        );
+        results.insert(
+            "check".to_string(),
+            StepResult {
+                name: "check".to_string(),
+                output: "PASS".to_string(),
+                success: true,
+                elapsed_ms: 50,
+                backend: Some("claude".to_string()),
+            },
+        );
+        results
+    }
+
+    #[test]
+    fn test_condition_contains() {
+        let config = Config::default();
+        let runner = WorkflowRunner::new(config, PathBuf::from("."), vec![]);
+        let results = make_test_results();
+
+        // New syntax: contains(step.output, "string")
+        assert!(runner.evaluate_condition(r#"contains(analyze.output, "ISSUES_FOUND")"#, &results));
+        assert!(!runner.evaluate_condition(r#"contains(analyze.output, "NO_ISSUES")"#, &results));
+
+        // Step doesn't exist
+        assert!(!runner.evaluate_condition(r#"contains(missing.output, "test")"#, &results));
+    }
+
+    #[test]
+    fn test_condition_equals() {
+        let config = Config::default();
+        let runner = WorkflowRunner::new(config, PathBuf::from("."), vec![]);
+        let results = make_test_results();
+
+        // Exact match (trims whitespace)
+        assert!(runner.evaluate_condition(r#"equals(check.output, "PASS")"#, &results));
+        assert!(!runner.evaluate_condition(r#"equals(check.output, "FAIL")"#, &results));
+
+        // Partial match should fail equals
+        assert!(!runner.evaluate_condition(r#"equals(analyze.output, "ISSUES_FOUND")"#, &results));
+    }
+
+    #[test]
+    fn test_condition_not() {
+        let config = Config::default();
+        let runner = WorkflowRunner::new(config, PathBuf::from("."), vec![]);
+        let results = make_test_results();
+
+        // Negation
+        assert!(!runner.evaluate_condition(r#"not(contains(analyze.output, "ISSUES_FOUND"))"#, &results));
+        assert!(runner.evaluate_condition(r#"not(contains(analyze.output, "NO_ISSUES"))"#, &results));
+        assert!(runner.evaluate_condition(r#"not(equals(check.output, "FAIL"))"#, &results));
+    }
+
+    #[test]
+    fn test_condition_legacy_syntax() {
+        let config = Config::default();
+        let runner = WorkflowRunner::new(config, PathBuf::from("."), vec![]);
+        let results = make_test_results();
+
+        // Legacy syntax still works
+        assert!(runner.evaluate_condition(r#"steps.analyze.output contains 'ISSUES_FOUND'"#, &results));
+        assert!(!runner.evaluate_condition(r#"steps.analyze.output contains 'NO_ISSUES'"#, &results));
+    }
+
+    #[test]
+    fn test_condition_unparseable_returns_true() {
+        let config = Config::default();
+        let runner = WorkflowRunner::new(config, PathBuf::from("."), vec![]);
+        let results = make_test_results();
+
+        // Unparseable conditions default to true (step runs)
+        assert!(runner.evaluate_condition("some random text", &results));
+        assert!(runner.evaluate_condition("", &results));
+    }
+
+    #[test]
+    fn test_step_if_alias() {
+        // Test that `if` works as alias for `when` in TOML
+        let toml_str = r#"
+            name = "test"
+            backend = "claude"
+            prompt = "test prompt"
+            if = "contains(analyze.output, \"ISSUES_FOUND\")"
+        "#;
+        let step: Step = toml::from_str(toml_str).unwrap();
+        assert_eq!(step.when, Some(r#"contains(analyze.output, "ISSUES_FOUND")"#.to_string()));
     }
 }
