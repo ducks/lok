@@ -1,0 +1,21 @@
+name = "test-parallel"
+description = "Test parallel step execution"
+
+# These three steps have no dependencies - should run in parallel
+[[steps]]
+name = "parallel_a"
+shell = "sleep 0.1 && echo 'A done'"
+
+[[steps]]
+name = "parallel_b"
+shell = "sleep 0.1 && echo 'B done'"
+
+[[steps]]
+name = "parallel_c"
+shell = "sleep 0.1 && echo 'C done'"
+
+# This step depends on all three - should run after
+[[steps]]
+name = "final"
+shell = "echo 'All parallel steps: {{ steps.parallel_a.output }}, {{ steps.parallel_b.output }}, {{ steps.parallel_c.output }}'"
+depends_on = ["parallel_a", "parallel_b", "parallel_c"]

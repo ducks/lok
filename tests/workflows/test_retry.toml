@@ -1,0 +1,26 @@
+name = "test-retry"
+description = "Test retry behavior on failing steps"
+
+# This step uses a counter file to fail twice then succeed
+# The shell script increments a counter and exits 1 until counter >= 3
+[[steps]]
+name = "flaky_step"
+shell = """
+COUNTER_FILE="/tmp/lok_retry_test_counter"
+if [ ! -f "$COUNTER_FILE" ]; then echo 0 > "$COUNTER_FILE"; fi
+COUNT=$(cat "$COUNTER_FILE")
+COUNT=$((COUNT + 1))
+echo $COUNT > "$COUNTER_FILE"
+if [ $COUNT -lt 3 ]; then
+  echo "Attempt $COUNT failed"
+  exit 1
+fi
+echo "SUCCESS on attempt $COUNT"
+"""
+retries = 3
+retry_delay = 100
+
+[[steps]]
+name = "cleanup"
+shell = "rm -f /tmp/lok_retry_test_counter && echo 'cleaned up'"
+depends_on = ["flaky_step"]

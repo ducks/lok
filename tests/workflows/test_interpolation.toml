@@ -1,0 +1,16 @@
+name = "test-interpolation"
+description = "Test variable interpolation between steps"
+
+[[steps]]
+name = "step1"
+shell = "echo 'hello from step1'"
+
+[[steps]]
+name = "step2"
+shell = "echo 'step1 said: {{ steps.step1.output }}'"
+depends_on = ["step1"]
+
+[[steps]]
+name = "step3"
+shell = "echo 'final: {{ steps.step2.output }}'"
+depends_on = ["step2"]

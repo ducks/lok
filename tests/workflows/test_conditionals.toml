@@ -1,0 +1,34 @@
+name = "test-conditionals"
+description = "Test conditional step execution"
+
+[[steps]]
+name = "check"
+shell = "echo 'STATUS: ISSUES_FOUND'"
+
+[[steps]]
+name = "should_run"
+if = "contains(check.output, 'ISSUES_FOUND')"
+shell = "echo 'CONDITIONAL_RAN: issues branch'"
+depends_on = ["check"]
+
+[[steps]]
+name = "should_skip"
+if = "contains(check.output, 'NO_ISSUES')"
+shell = "echo 'CONDITIONAL_RAN: clean branch'"
+depends_on = ["check"]
+
+[[steps]]
+name = "not_condition"
+if = "not(contains(check.output, 'NO_ISSUES'))"
+shell = "echo 'NOT_CONDITION_RAN: correct'"
+depends_on = ["check"]
+
+[[steps]]
+name = "equals_test"
+shell = "echo 'PASS'"
+
+[[steps]]
+name = "equals_check"
+if = "equals(equals_test.output, 'PASS')"
+shell = "echo 'EQUALS_WORKED'"
+depends_on = ["equals_test"]
