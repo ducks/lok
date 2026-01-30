@@ -175,6 +175,18 @@ pub struct Step {
     /// Shell command to run after edits to verify they work
     #[serde(default)]
     pub verify: Option<String>,
+
+    // Retry fields
+    /// Number of retry attempts on failure (default 0 = no retries)
+    #[serde(default)]
+    pub retries: u32,
+    /// Base delay between retries in milliseconds (default 1000, doubles each retry)
+    #[serde(default = "default_retry_delay")]
+    pub retry_delay: u64,
+}
+
+fn default_retry_delay() -> u64 {
+    1000
 }
 
 /// Result of executing a step
@@ -320,42 +332,74 @@ impl WorkflowRunner {
                     let step_name = step.name.clone();
                     let backend_name = step.backend.clone();
                     let apply_edits_flag = step.apply_edits;
+                    let max_retries = step.retries;
+                    let retry_delay = step.retry_delay;
 
                     async move {
                         println!("{} {}", "[step]".cyan(), step_name.bold());
                         let start = std::time::Instant::now();
 
-                        // Shell step - run command directly
+                        // Shell step - run command directly (with retry support)
                         if let Some(ref shell_cmd) = shell {
                             println!("  {} {}", "shell:".dimmed(), shell_cmd.dimmed());
-                            match run_shell(shell_cmd, &cwd) {
-                                Ok(output) => {
-                                    let elapsed_ms = start.elapsed().as_millis() as u64;
+
+                            let mut last_error = String::new();
+                            for attempt in 0..=max_retries {
+                                if attempt > 0 {
+                                    let delay = retry_delay * 2_u64.pow(attempt - 1);
                                     println!(
-                                        "  {} ({:.1}s)",
-                                        "✓".green(),
-                                        elapsed_ms as f64 / 1000.0
+                                        "  {} Retry {}/{} in {}ms...",
+                                        "↻".yellow(),
+                                        attempt,
+                                        max_retries,
+                                        delay
                                     );
-                                    return StepResult {
-                                        name: step_name,
-                                        output,
-                                        success: true,
-                                        elapsed_ms,
-                                        backend: None,
-                                    };
+                                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                                 }
-                                Err(e) => {
-                                    let elapsed_ms = start.elapsed().as_millis() as u64;
-                                    println!("  {} {}", "✗".red(), e);
-                                    return StepResult {
-                                        name: step_name,
-                                        output: format!("Error: {}", e),
-                                        success: false,
-                                        elapsed_ms,
-                                        backend: None,
-                                    };
+
+                                match run_shell(shell_cmd, &cwd) {
+                                    Ok(output) => {
+                                        let elapsed_ms = start.elapsed().as_millis() as u64;
+                                        println!(
+                                            "  {} ({:.1}s)",
+                                            "✓".green(),
+                                            elapsed_ms as f64 / 1000.0
+                                        );
+                                        return StepResult {
+                                            name: step_name,
+                                            output,
+                                            success: true,
+                                            elapsed_ms,
+                                            backend: None,
+                                        };
+                                    }
+                                    Err(e) => {
+                                        last_error = e.to_string();
+                                        if attempt == max_retries {
+                                            let elapsed_ms = start.elapsed().as_millis() as u64;
+                                            println!("  {} {}", "✗".red(), e);
+                                            return StepResult {
+                                                name: step_name,
+                                                output: format!("Error: {}", e),
+                                                success: false,
+                                                elapsed_ms,
+                                                backend: None,
+                                            };
+                                        }
+                                        println!("  {} {} (will retry)", "⚠".yellow(), e);
+                                    }
                                 }
                             }
+
+                            // Should never reach here, but just in case
+                            let elapsed_ms = start.elapsed().as_millis() as u64;
+                            return StepResult {
+                                name: step_name,
+                                output: format!("Error: {}", last_error),
+                                success: false,
+                                elapsed_ms,
+                                backend: None,
+                            };
                         }
 
                         // LLM step - query backend
@@ -396,13 +440,52 @@ impl WorkflowRunner {
                             };
                         }
 
-                        // Execute LLM query
-                        let output = backend.query(&prompt, &cwd).await;
+                        // Execute LLM query (with retry support)
+                        let mut last_error = String::new();
+                        let mut text = String::new();
+                        let mut query_success = false;
+
+                        for attempt in 0..=max_retries {
+                            if attempt > 0 {
+                                let delay = retry_delay * 2_u64.pow(attempt - 1);
+                                println!(
+                                    "  {} Retry {}/{} in {}ms...",
+                                    "↻".yellow(),
+                                    attempt,
+                                    max_retries,
+                                    delay
+                                );
+                                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                            }
+
+                            match backend.query(&prompt, &cwd).await {
+                                Ok(t) => {
+                                    text = t;
+                                    query_success = true;
+                                    break;
+                                }
+                                Err(e) => {
+                                    last_error = e.to_string();
+                                    if attempt == max_retries {
+                                        let elapsed_ms = start.elapsed().as_millis() as u64;
+                                        println!("  {} {}", "✗".red(), e);
+                                        return StepResult {
+                                            name: step_name,
+                                            output: format!("Error: {}", e),
+                                            success: false,
+                                            elapsed_ms,
+                                            backend: Some(backend_name),
+                                        };
+                                    }
+                                    println!("  {} {} (will retry)", "⚠".yellow(), e);
+                                }
+                            }
+                        }
+
                         let elapsed_ms = start.elapsed().as_millis() as u64;
 
-                        match output {
-                            Ok(text) => {
-                                println!("  {} ({:.1}s)", "✓".green(), elapsed_ms as f64 / 1000.0);
+                        if query_success {
+                            println!("  {} ({:.1}s)", "✓".green(), elapsed_ms as f64 / 1000.0);
 
                                 // Apply edits if requested
                                 if apply_edits_flag {
@@ -508,23 +591,21 @@ impl WorkflowRunner {
                                     }
                                 }
 
-                                StepResult {
-                                    name: step_name,
-                                    output: text,
-                                    success: true,
-                                    elapsed_ms,
-                                    backend: Some(backend_name),
-                                }
+                            StepResult {
+                                name: step_name,
+                                output: text,
+                                success: true,
+                                elapsed_ms,
+                                backend: Some(backend_name),
                             }
-                            Err(e) => {
-                                println!("  {} {}", "✗".red(), e);
-                                StepResult {
-                                    name: step_name,
-                                    output: format!("Error: {}", e),
-                                    success: false,
-                                    elapsed_ms,
-                                    backend: Some(backend_name),
-                                }
+                        } else {
+                            // Should never reach here given retry loop logic, but just in case
+                            StepResult {
+                                name: step_name,
+                                output: format!("Error: {}", last_error),
+                                success: false,
+                                elapsed_ms,
+                                backend: Some(backend_name),
                             }
                         }
                     }
@@ -1386,6 +1467,8 @@ line2"}"#;
                 shell: Some("echo test".to_string()),
                 apply_edits: false,
                 verify: None,
+                retries: 0,
+                retry_delay: 1000,
             },
             Step {
                 name: "fetch".to_string(), // duplicate!
@@ -1396,6 +1479,8 @@ line2"}"#;
                 shell: Some("echo test2".to_string()),
                 apply_edits: false,
                 verify: None,
+                retries: 0,
+                retry_delay: 1000,
             },
         ];
 
