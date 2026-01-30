@@ -102,6 +102,18 @@ static WORKFLOW_BACKENDS_RE: LazyLock<regex::Regex> =
 static UNKNOWN_VAR_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\{\{\s*([^}]+)\s*\}\}").unwrap());
 
+/// Regex for matching {{ item }} pattern (loop iteration item)
+static ITEM_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\{\{\s*item\s*\}\}").unwrap());
+
+/// Regex for matching {{ item.field }} pattern (loop item field access)
+static ITEM_FIELD_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\{\{\s*item\.([a-zA-Z0-9_]+)\s*\}\}").unwrap());
+
+/// Regex for matching {{ index }} pattern (loop iteration index)
+static INDEX_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\{\{\s*index\s*\}\}").unwrap());
+
 /// Placeholder for escaped braces - uses a pattern unlikely to appear in real content
 const ESCAPED_OPEN_BRACE: &str = "\x00LOK_OPEN_BRACE\x00";
 
@@ -183,6 +195,12 @@ pub struct Step {
     /// Base delay between retries in milliseconds (default 1000, doubles each retry)
     #[serde(default = "default_retry_delay")]
     pub retry_delay: u64,
+
+    // Loop fields
+    /// Iterate over a JSON array from a previous step or inline array
+    /// Examples: "steps.plan.output" or '["a", "b", "c"]'
+    #[serde(default)]
+    pub for_each: Option<String>,
 }
 
 fn default_retry_delay() -> u64 {
@@ -206,6 +224,7 @@ struct PreparedStep<'a> {
     shell: Option<String>,
     format: Option<String>,
     verify: Option<String>,
+    for_each_items: Option<Vec<serde_json::Value>>,
 }
 
 /// Workflow executor
@@ -303,12 +322,22 @@ impl WorkflowRunner {
                     .as_ref()
                     .and_then(|v| resolve_format_command(v, &self.context));
                 let verify = verify_value.and_then(|v| resolve_verify_command(&v, &self.context));
+
+                // Parse for_each array if present
+                let for_each_items = step
+                    .for_each
+                    .as_ref()
+                    .map(|fe| parse_for_each_array(fe, &results))
+                    .transpose()
+                    .map_err(|e| anyhow::anyhow!("Step '{}': {}", step.name, e))?;
+
                 steps_to_run.push(PreparedStep {
                     step,
                     prompt,
                     shell,
                     format,
                     verify,
+                    for_each_items,
                 });
             }
 
@@ -326,6 +355,7 @@ impl WorkflowRunner {
                         shell,
                         format,
                         verify,
+                        for_each_items,
                     } = prepared;
                     let config = self.config.clone();
                     let cwd = self.cwd.clone();
@@ -338,6 +368,123 @@ impl WorkflowRunner {
                     async move {
                         println!("{} {}", "[step]".cyan(), step_name.bold());
                         let start = std::time::Instant::now();
+
+                        // Handle for_each loop steps
+                        if let Some(items) = for_each_items {
+                            println!(
+                                "  {} iterating over {} items",
+                                "[loop]".cyan(),
+                                items.len()
+                            );
+
+                            let mut iteration_results: Vec<serde_json::Value> = Vec::new();
+                            let mut all_success = true;
+
+                            for (index, item) in items.iter().enumerate() {
+                                // Interpolate item/index into prompt and shell
+                                let iter_prompt = interpolate_loop_vars(&prompt, item, index);
+                                let iter_shell = shell.as_ref().map(|s| interpolate_loop_vars(s, item, index));
+
+                                println!(
+                                    "    {} [{}/{}]",
+                                    "→".dimmed(),
+                                    index + 1,
+                                    items.len()
+                                );
+
+                                let iter_output: String;
+                                let iter_success: bool;
+
+                                // Shell iteration
+                                if let Some(ref shell_cmd) = iter_shell {
+                                    match run_shell(shell_cmd, &cwd) {
+                                        Ok(output) => {
+                                            iter_output = output;
+                                            iter_success = true;
+                                        }
+                                        Err(e) => {
+                                            iter_output = format!("Error: {}", e);
+                                            iter_success = false;
+                                            all_success = false;
+                                        }
+                                    }
+                                } else {
+                                    // LLM iteration
+                                    let backend_config = match config.backends.get(&backend_name) {
+                                        Some(cfg) => cfg,
+                                        None => {
+                                            iter_output = format!("Backend not found: {}", backend_name);
+                                            iter_success = false;
+                                            all_success = false;
+                                            iteration_results.push(serde_json::json!({
+                                                "index": index,
+                                                "item": item,
+                                                "output": iter_output,
+                                                "success": iter_success
+                                            }));
+                                            continue;
+                                        }
+                                    };
+
+                                    let backend = match backend::create_backend(&backend_name, backend_config) {
+                                        Ok(b) => b,
+                                        Err(e) => {
+                                            iter_output = format!("Failed to create backend: {}", e);
+                                            iter_success = false;
+                                            all_success = false;
+                                            iteration_results.push(serde_json::json!({
+                                                "index": index,
+                                                "item": item,
+                                                "output": iter_output,
+                                                "success": iter_success
+                                            }));
+                                            continue;
+                                        }
+                                    };
+
+                                    match backend.query(&iter_prompt, &cwd).await {
+                                        Ok(text) => {
+                                            iter_output = text;
+                                            iter_success = true;
+                                        }
+                                        Err(e) => {
+                                            iter_output = format!("Error: {}", e);
+                                            iter_success = false;
+                                            all_success = false;
+                                        }
+                                    }
+                                }
+
+                                let status = if iter_success { "✓".green() } else { "✗".red() };
+                                println!("      {} iteration {}", status, index);
+
+                                iteration_results.push(serde_json::json!({
+                                    "index": index,
+                                    "item": item,
+                                    "output": iter_output,
+                                    "success": iter_success
+                                }));
+                            }
+
+                            let elapsed_ms = start.elapsed().as_millis() as u64;
+                            let output_json = serde_json::to_string_pretty(&iteration_results)
+                                .unwrap_or_else(|_| "[]".to_string());
+
+                            println!(
+                                "  {} ({:.1}s, {} iterations)",
+                                if all_success { "✓".green() } else { "⚠".yellow() },
+                                elapsed_ms as f64 / 1000.0,
+                                items.len()
+                            );
+
+                            return StepResult {
+                                name: step_name,
+                                output: output_json,
+                                success: all_success,
+                                elapsed_ms,
+                                backend: if shell.is_none() { Some(backend_name) } else { None },
+                            };
+                        }
 
                         // Shell step - run command directly (with retry support)
                         if let Some(ref shell_cmd) = shell {
@@ -918,12 +1065,19 @@ impl WorkflowRunner {
         };
 
         // Check for any remaining unknown {{ ... }} variables
-        if let Some(cap) = UNKNOWN_VAR_RE.captures(&output) {
+        // Skip item, item.field, and index - those are handled by for_each loops
+        for cap in UNKNOWN_VAR_RE.captures_iter(&output) {
             let variable = cap
                 .get(1)
                 .expect("regex group 1 always exists")
                 .as_str()
                 .trim();
+
+            // Skip loop variables - they'll be interpolated later by for_each
+            if variable == "item" || variable == "index" || variable.starts_with("item.") {
+                continue;
+            }
+
             return Err(WorkflowError::UnknownVariable {
                 workflow: workflow_name.to_string(),
                 step: current_step.to_string(),
@@ -933,6 +1087,86 @@ impl WorkflowRunner {
 
         // Restore escaped braces from step outputs
         Ok(unescape_braces(&output))
+    }
+}
+
+/// Interpolate loop variables ({{ item }}, {{ item.field }}, {{ index }}) in a string
+fn interpolate_loop_vars(template: &str, item: &serde_json::Value, index: usize) -> String {
+    // Handle {{ item.field }} for object field access first
+    let output = ITEM_FIELD_RE
+        .replace_all(template, |caps: &regex::Captures| {
+            let field = &caps[1];
+            item.get(field)
+                .map(|v| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .unwrap_or_else(|| format!("[item.{} not found]", field))
+        })
+        .into_owned();
+
+    // Handle {{ item }} for the whole item
+    let output = ITEM_RE
+        .replace_all(&output, |_: &regex::Captures| match item {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        })
+        .into_owned();
+
+    // Handle {{ index }} for iteration index
+    INDEX_RE
+        .replace_all(&output, index.to_string().as_str())
+        .into_owned()
+}
+
+/// Parse for_each value into a JSON array
+/// Can be a reference to previous step (steps.X.output) or an inline JSON array
+fn parse_for_each_array(
+    for_each: &str,
+    results: &HashMap<String, StepResult>,
+) -> Result<Vec<serde_json::Value>> {
+    // Try to parse as inline JSON array first
+    if for_each.trim().starts_with('[') {
+        let array: Vec<serde_json::Value> =
+            serde_json::from_str(for_each).context("Failed to parse for_each as JSON array")?;
+        return Ok(array);
+    }
+
+    // Parse as step reference: steps.X.output
+    let step_ref_re = regex::Regex::new(r"^steps\.([a-zA-Z0-9_-]+)\.output$").unwrap();
+    if let Some(caps) = step_ref_re.captures(for_each) {
+        let step_name = &caps[1];
+        let step_result = results
+            .get(step_name)
+            .ok_or_else(|| anyhow::anyhow!("for_each: step '{}' not found", step_name))?;
+
+        // Try to extract JSON from the step output (handles ```json blocks)
+        // Also try direct parsing for raw JSON arrays
+        let json_str = extract_json_from_text(&step_result.output)
+            .or_else(|| extract_json_array_from_text(&step_result.output))
+            .ok_or_else(|| {
+                anyhow::anyhow!("for_each: no JSON found in step '{}' output", step_name)
+            })?;
+
+        let value: serde_json::Value = serde_json::from_str(&json_str)
+            .or_else(|_| serde_json::from_str(&sanitize_json_strings(&json_str)))
+            .context(format!(
+                "for_each: failed to parse JSON from step '{}'",
+                step_name
+            ))?;
+
+        match value {
+            serde_json::Value::Array(arr) => Ok(arr),
+            _ => Err(anyhow::anyhow!(
+                "for_each: step '{}' output is not a JSON array",
+                step_name
+            )),
+        }
+    } else {
+        Err(anyhow::anyhow!(
+            "for_each: invalid format '{}'. Use 'steps.X.output' or inline JSON array",
+            for_each
+        ))
     }
 }
 
@@ -953,6 +1187,34 @@ fn run_shell(cmd: &str, cwd: &Path) -> Result<String> {
     }
 
     Ok(format!("{}{}", stdout, stderr).trim().to_string())
+}
+
+/// Extract JSON array from text (similar to extract_json_from_text but for arrays)
+fn extract_json_array_from_text(text: &str) -> Option<String> {
+    // Try to find raw JSON array
+    if let Some(start) = text.find('[') {
+        // Find matching closing bracket
+        let mut depth = 0;
+        let mut end = start;
+        for (i, c) in text[start..].char_indices() {
+            match c {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = start + i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if depth == 0 && end > start {
+            return Some(text[start..end].to_string());
+        }
+    }
+
+    None
 }
 
 /// Extract a field from JSON in text (handles markdown code blocks)
@@ -1469,6 +1731,7 @@ line2"}"#;
                 verify: None,
                 retries: 0,
                 retry_delay: 1000,
+                for_each: None,
             },
             Step {
                 name: "fetch".to_string(), // duplicate!
@@ -1481,6 +1744,7 @@ line2"}"#;
                 verify: None,
                 retries: 0,
                 retry_delay: 1000,
+                for_each: None,
             },
         ];
 
@@ -1611,5 +1875,173 @@ line2"}"#;
             step.when,
             Some(r#"contains(analyze.output, "ISSUES_FOUND")"#.to_string())
         );
+    }
+
+    #[test]
+    fn test_interpolate_loop_vars_item_string() {
+        let item = serde_json::json!("hello");
+        let result = interpolate_loop_vars("Value: {{ item }}", &item, 0);
+        assert_eq!(result, "Value: hello");
+    }
+
+    #[test]
+    fn test_interpolate_loop_vars_item_object() {
+        let item = serde_json::json!({"name": "tests", "pattern": "*.spec.rb"});
+        let result = interpolate_loop_vars(
+            "Name: {{ item.name }}, Pattern: {{ item.pattern }}",
+            &item,
+            0,
+        );
+        assert_eq!(result, "Name: tests, Pattern: *.spec.rb");
+    }
+
+    #[test]
+    fn test_interpolate_loop_vars_item_whole_object() {
+        let item = serde_json::json!({"name": "tests"});
+        let result = interpolate_loop_vars("Item: {{ item }}", &item, 0);
+        assert_eq!(result, r#"Item: {"name":"tests"}"#);
+    }
+
+    #[test]
+    fn test_interpolate_loop_vars_index() {
+        let item = serde_json::json!("value");
+        let result = interpolate_loop_vars("Index: {{ index }}", &item, 5);
+        assert_eq!(result, "Index: 5");
+    }
+
+    #[test]
+    fn test_interpolate_loop_vars_combined() {
+        let item = serde_json::json!({"file": "test.rb"});
+        let result = interpolate_loop_vars(
+            "Processing {{ item.file }} ({{ index }}/10): {{ item }}",
+            &item,
+            3,
+        );
+        assert!(result.contains("Processing test.rb"));
+        assert!(result.contains("(3/10)"));
+    }
+
+    #[test]
+    fn test_interpolate_loop_vars_missing_field() {
+        let item = serde_json::json!({"name": "tests"});
+        let result = interpolate_loop_vars("Missing: {{ item.missing }}", &item, 0);
+        assert_eq!(result, "Missing: [item.missing not found]");
+    }
+
+    #[test]
+    fn test_parse_for_each_inline_array() {
+        let results = HashMap::new();
+        let items = parse_for_each_array(r#"["a", "b", "c"]"#, &results).unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0], serde_json::json!("a"));
+        assert_eq!(items[1], serde_json::json!("b"));
+        assert_eq!(items[2], serde_json::json!("c"));
+    }
+
+    #[test]
+    fn test_parse_for_each_inline_array_objects() {
+        let results = HashMap::new();
+        let items =
+            parse_for_each_array(r#"[{"name": "tests"}, {"name": "frontend"}]"#, &results).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["name"], "tests");
+        assert_eq!(items[1]["name"], "frontend");
+    }
+
+    #[test]
+    fn test_parse_for_each_step_reference() {
+        let mut results = HashMap::new();
+        results.insert(
+            "plan".to_string(),
+            StepResult {
+                name: "plan".to_string(),
+                output: r#"["chunk1", "chunk2", "chunk3"]"#.to_string(),
+                success: true,
+                elapsed_ms: 100,
+                backend: Some("claude".to_string()),
+            },
+        );
+
+        let items = parse_for_each_array("steps.plan.output", &results).unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0], serde_json::json!("chunk1"));
+    }
+
+    #[test]
+    fn test_parse_for_each_step_reference_with_code_block() {
+        let mut results = HashMap::new();
+        results.insert(
+            "plan".to_string(),
+            StepResult {
+                name: "plan".to_string(),
+                output: r#"```json
+[{"name": "tests", "pattern": "*.spec.rb"}, {"name": "frontend", "pattern": "*.js"}]
+```"#
+                    .to_string(),
+                success: true,
+                elapsed_ms: 100,
+                backend: Some("claude".to_string()),
+            },
+        );
+
+        let items = parse_for_each_array("steps.plan.output", &results).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["name"], "tests");
+        assert_eq!(items[1]["pattern"], "*.js");
+    }
+
+    #[test]
+    fn test_parse_for_each_invalid_format() {
+        let results = HashMap::new();
+        let err = parse_for_each_array("invalid", &results).unwrap_err();
+        assert!(err.to_string().contains("invalid format"));
+    }
+
+    #[test]
+    fn test_parse_for_each_step_not_found() {
+        let results = HashMap::new();
+        let err = parse_for_each_array("steps.missing.output", &results).unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_parse_for_each_not_array() {
+        let mut results = HashMap::new();
+        results.insert(
+            "plan".to_string(),
+            StepResult {
+                name: "plan".to_string(),
+                output: r#"{"not": "an array"}"#.to_string(),
+                success: true,
+                elapsed_ms: 100,
+                backend: Some("claude".to_string()),
+            },
+        );
+
+        let err = parse_for_each_array("steps.plan.output", &results).unwrap_err();
+        assert!(err.to_string().contains("not a JSON array"));
+    }
+
+    #[test]
+    fn test_step_for_each_toml_parsing() {
+        let toml_str = r#"
+            name = "review_chunk"
+            backend = "claude"
+            prompt = "Review {{ item.name }}"
+            for_each = "steps.plan.output"
+        "#;
+        let step: Step = toml::from_str(toml_str).unwrap();
+        assert_eq!(step.for_each, Some("steps.plan.output".to_string()));
+    }
+
+    #[test]
+    fn test_step_for_each_inline_array_toml() {
+        let toml_str = r#"
+            name = "process"
+            shell = "echo {{ item }}"
+            for_each = '["a", "b", "c"]'
+        "#;
+        let step: Step = toml::from_str(toml_str).unwrap();
+        assert_eq!(step.for_each, Some(r#"["a", "b", "c"]"#.to_string()));
     }
 }
