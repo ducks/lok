@@ -1140,13 +1140,24 @@ fn parse_for_each_array(
             .get(step_name)
             .ok_or_else(|| anyhow::anyhow!("for_each: step '{}' not found", step_name))?;
 
-        // Try to extract JSON from the step output (handles ```json blocks)
-        // Also try direct parsing for raw JSON arrays
-        let json_str = extract_json_from_text(&step_result.output)
-            .or_else(|| extract_json_array_from_text(&step_result.output))
-            .ok_or_else(|| {
-                anyhow::anyhow!("for_each: no JSON found in step '{}' output", step_name)
-            })?;
+        // Try to extract JSON from the step output
+        // For for_each, prefer array extraction since we expect an array
+        // Check which comes first: [ or { to decide extraction order
+        let output = &step_result.output;
+        let array_pos = output.find('[');
+        let object_pos = output.find('{');
+
+        let json_str = match (array_pos, object_pos) {
+            (Some(a), Some(o)) if a < o => {
+                // Array comes first, try array extraction first
+                extract_json_array_from_text(output).or_else(|| extract_json_from_text(output))
+            }
+            _ => {
+                // Object comes first or only one exists
+                extract_json_from_text(output).or_else(|| extract_json_array_from_text(output))
+            }
+        }
+        .ok_or_else(|| anyhow::anyhow!("for_each: no JSON found in step '{}' output", step_name))?;
 
         let value: serde_json::Value = serde_json::from_str(&json_str)
             .or_else(|_| serde_json::from_str(&sanitize_json_strings(&json_str)))
