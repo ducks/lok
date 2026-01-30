@@ -1563,8 +1563,11 @@ line2"}"#;
         let results = make_test_results();
 
         // Negation
-        assert!(!runner.evaluate_condition(r#"not(contains(analyze.output, "ISSUES_FOUND"))"#, &results));
-        assert!(runner.evaluate_condition(r#"not(contains(analyze.output, "NO_ISSUES"))"#, &results));
+        assert!(!runner
+            .evaluate_condition(r#"not(contains(analyze.output, "ISSUES_FOUND"))"#, &results));
+        assert!(
+            runner.evaluate_condition(r#"not(contains(analyze.output, "NO_ISSUES"))"#, &results)
+        );
         assert!(runner.evaluate_condition(r#"not(equals(check.output, "FAIL"))"#, &results));
     }
 
@@ -1575,8 +1578,12 @@ line2"}"#;
         let results = make_test_results();
 
         // Legacy syntax still works
-        assert!(runner.evaluate_condition(r#"steps.analyze.output contains 'ISSUES_FOUND'"#, &results));
-        assert!(!runner.evaluate_condition(r#"steps.analyze.output contains 'NO_ISSUES'"#, &results));
+        assert!(
+            runner.evaluate_condition(r#"steps.analyze.output contains 'ISSUES_FOUND'"#, &results)
+        );
+        assert!(
+            !runner.evaluate_condition(r#"steps.analyze.output contains 'NO_ISSUES'"#, &results)
+        );
     }
 
     #[test]
@@ -1600,6 +1607,9 @@ line2"}"#;
             if = "contains(analyze.output, \"ISSUES_FOUND\")"
         "#;
         let step: Step = toml::from_str(toml_str).unwrap();
-        assert_eq!(step.when, Some(r#"contains(analyze.output, "ISSUES_FOUND")"#.to_string()));
+        assert_eq!(
+            step.when,
+            Some(r#"contains(analyze.output, "ISSUES_FOUND")"#.to_string())
+        );
     }
 }
