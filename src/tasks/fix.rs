@@ -180,34 +180,32 @@ async fn gather_code_context(dir: &Path, issue: &GitHubIssue) -> Result<String> 
         context.push_str("## Referenced files from issue:\n\n");
 
         for file_ref in &file_refs {
-            // Try to read the file
+            // Try to read the file - if it doesn't exist, just skip it
             let file_path = dir.join(&file_ref.path);
-            if tokio::fs::metadata(&file_path).await.is_ok() {
-                if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
-                    let lines: Vec<&str> = content.lines().collect();
+            if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
+                let lines: Vec<&str> = content.lines().collect();
 
-                    // Show context around the referenced line
-                    let start = file_ref.line.saturating_sub(10);
-                    let end = (file_ref.line + 10).min(lines.len());
+                // Show context around the referenced line
+                let start = file_ref.line.saturating_sub(10);
+                let end = (file_ref.line + 10).min(lines.len());
 
-                    context.push_str(&format!("### {}", file_ref.path));
-                    if file_ref.line > 0 {
-                        context.push_str(&format!(" (around line {})", file_ref.line));
-                    }
-                    context.push_str("\n```\n");
-
-                    for (i, line) in lines[start..end].iter().enumerate() {
-                        let line_num = start + i + 1;
-                        let marker = if line_num == file_ref.line {
-                            ">>>"
-                        } else {
-                            "   "
-                        };
-                        context.push_str(&format!("{} {:4}: {}\n", marker, line_num, line));
-                    }
-
-                    context.push_str("```\n\n");
+                context.push_str(&format!("### {}", file_ref.path));
+                if file_ref.line > 0 {
+                    context.push_str(&format!(" (around line {})", file_ref.line));
                 }
+                context.push_str("\n```\n");
+
+                for (i, line) in lines[start..end].iter().enumerate() {
+                    let line_num = start + i + 1;
+                    let marker = if line_num == file_ref.line {
+                        ">>>"
+                    } else {
+                        "   "
+                    };
+                    context.push_str(&format!("{} {:4}: {}\n", marker, line_num, line));
+                }
+
+                context.push_str("```\n\n");
             }
         }
     }

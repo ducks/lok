@@ -1465,13 +1465,15 @@ async fn apply_edits(edits: &[FileEdit], cwd: &Path) -> Result<usize> {
     for edit in edits {
         let file_path = cwd.join(&edit.file);
 
-        if tokio::fs::metadata(&file_path).await.is_err() {
-            anyhow::bail!("File not found: {}", edit.file);
-        }
-
-        let content = tokio::fs::read_to_string(&file_path)
-            .await
-            .context(format!("Failed to read {}", edit.file))?;
+        let content = match tokio::fs::read_to_string(&file_path).await {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                anyhow::bail!("File not found: {}", edit.file);
+            }
+            Err(e) => {
+                return Err(e).context(format!("Failed to read {}", edit.file));
+            }
+        };
 
         if !content.contains(&edit.old) {
             anyhow::bail!(
