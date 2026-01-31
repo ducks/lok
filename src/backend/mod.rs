@@ -117,7 +117,7 @@ pub async fn run_query_with_config(
     cwd: &Path,
     config: &Config,
 ) -> Result<Vec<QueryResult>> {
-    let cwd = crate::utils::canonicalize_or_warn(cwd);
+    let cwd = crate::utils::canonicalize_async(cwd).await;
     let default_timeout = config.defaults.timeout;
     let parallel = config.defaults.parallel;
 

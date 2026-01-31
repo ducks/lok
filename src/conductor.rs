@@ -198,7 +198,7 @@ Always explain your reasoning briefly before making tool calls."#,
     }
 
     pub async fn conduct(&self, task: &str, cwd: &Path) -> Result<String> {
-        let cwd = crate::utils::canonicalize_or_warn(cwd);
+        let cwd = crate::utils::canonicalize_async(cwd).await;
 
         println!("{}", "Conductor starting...".cyan().bold());
         println!("Task: {}", task);

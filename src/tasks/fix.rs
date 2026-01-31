@@ -81,7 +81,7 @@ pub async fn run(
     println!();
 
     // Gather relevant code context based on issue content
-    let code_context = gather_code_context(dir, &issue)?;
+    let code_context = gather_code_context(dir, &issue).await?;
 
     // Build the fix prompt
     let prompt = build_fix_prompt(&issue, &code_context);
@@ -166,7 +166,7 @@ fn fetch_issue(dir: &Path, number: u64) -> Result<GitHubIssue> {
     Ok(issue)
 }
 
-fn gather_code_context(dir: &Path, issue: &GitHubIssue) -> Result<String> {
+async fn gather_code_context(dir: &Path, issue: &GitHubIssue) -> Result<String> {
     let mut context = String::new();
 
     // Extract file references from issue body
@@ -182,8 +182,8 @@ fn gather_code_context(dir: &Path, issue: &GitHubIssue) -> Result<String> {
         for file_ref in &file_refs {
             // Try to read the file
             let file_path = dir.join(&file_ref.path);
-            if file_path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&file_path) {
+            if tokio::fs::metadata(&file_path).await.is_ok() {
+                if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
                     let lines: Vec<&str> = content.lines().collect();
 
                     // Show context around the referenced line

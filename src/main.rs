@@ -318,7 +318,7 @@ async fn main() -> Result<()> {
 
             let backend_names: Vec<String> =
                 backends.iter().map(|b| b.name().to_string()).collect();
-            let cwd = crate::utils::canonicalize_or_warn(&dir);
+            let cwd = crate::utils::canonicalize_async(&dir).await;
             let cwd_str = cwd.to_string_lossy().to_string();
 
             // Check cache first (unless --no-cache)
@@ -326,7 +326,7 @@ async fn main() -> Result<()> {
             let cache_key = cache.cache_key(&prompt, &backend_names, &cwd_str);
 
             if !no_cache {
-                if let Some(cached_results) = cache.get(&cache_key) {
+                if let Some(cached_results) = cache.get(&cache_key).await {
                     println!("{}", "(cached)".dimmed());
                     output::print_results(&cached_results);
                     cache.print_warnings();
@@ -338,7 +338,7 @@ async fn main() -> Result<()> {
 
             // Cache the results
             if !no_cache {
-                cache.set(&cache_key, &results);
+                cache.set(&cache_key, &results).await;
             }
 
             output::print_results(&results);
@@ -531,7 +531,7 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Spawn { task, dir, agent } => {
-            let spawner = spawn::Spawn::new(&config, &dir)?;
+            let spawner = spawn::Spawn::new(&config, &dir).await?;
 
             // Parse manual agents if provided
             let manual_agents = agent.map(|agents| {
@@ -568,10 +568,10 @@ async fn main() -> Result<()> {
                 run_workflow(&name, &dir, output.as_deref(), args, &config).await?;
             }
             WorkflowCommands::List => {
-                list_workflows()?;
+                list_workflows().await?;
             }
             WorkflowCommands::Validate { path } => {
-                validate_workflow(&path)?;
+                validate_workflow(&path).await?;
             }
         },
         Commands::Run {
@@ -844,10 +844,10 @@ async fn run_workflow(
     args: Vec<String>,
     config: &config::Config,
 ) -> Result<()> {
-    let path = workflow::find_workflow(name)?;
-    let wf = workflow::load_workflow(&path)?;
+    let path = workflow::find_workflow(name).await?;
+    let wf = workflow::load_workflow(&path).await?;
 
-    let cwd = crate::utils::canonicalize_or_warn(dir);
+    let cwd = crate::utils::canonicalize_async(dir).await;
     let runner = workflow::WorkflowRunner::new(config.clone(), cwd, args);
 
     let results = runner.run(&wf).await?;
@@ -855,7 +855,8 @@ async fn run_workflow(
     if let Some(output_path) = output {
         // Write full results to file
         let output_str = workflow::format_results(&results);
-        std::fs::write(output_path, &output_str)
+        tokio::fs::write(output_path, &output_str)
+            .await
             .with_context(|| format!("Failed to write output to {}", output_path.display()))?;
         println!(
             "{} Results written to {}",
@@ -869,8 +870,8 @@ async fn run_workflow(
     Ok(())
 }
 
-fn list_workflows() -> Result<()> {
-    let workflows = workflow::list_workflows()?;
+async fn list_workflows() -> Result<()> {
+    let workflows = workflow::list_workflows().await?;
 
     if workflows.is_empty() {
         println!("{}", "No workflows found.".yellow());
@@ -902,8 +903,8 @@ fn list_workflows() -> Result<()> {
     Ok(())
 }
 
-fn validate_workflow(path: &Path) -> Result<()> {
-    let wf = workflow::load_workflow(path)?;
+async fn validate_workflow(path: &Path) -> Result<()> {
+    let wf = workflow::load_workflow(path).await?;
 
     println!("{} {}", "✓".green(), "Workflow is valid".bold());
     println!();
@@ -1207,7 +1208,7 @@ async fn run_explain(
     println!("{}", "Lok Explain".cyan().bold());
     println!("{}", "=".repeat(50).dimmed());
 
-    let cwd = crate::utils::canonicalize_or_warn(dir);
+    let cwd = crate::utils::canonicalize_async(dir).await;
     println!("Analyzing: {}", cwd.display().to_string().yellow());
     println!();
 
