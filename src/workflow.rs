@@ -1374,12 +1374,27 @@ fn sanitize_json_strings(json: &str) -> String {
     result
 }
 
+/// Find the closing fence for a markdown code block.
+/// Must be on its own line (after a newline) to avoid matching ``` inside content.
+/// Returns position where content ends (the newline before the fence).
+fn find_closing_fence(text: &str) -> Option<usize> {
+    // Look for \n``` to find fence at start of line
+    if let Some(pos) = text.find("\n```") {
+        return Some(pos); // Return position of newline (where content ends)
+    }
+    // If content starts right after opening fence, check for ``` at very start
+    if text.starts_with("```") {
+        return Some(0);
+    }
+    None
+}
+
 /// Extract JSON object from text, handling markdown code blocks
 fn extract_json_from_text(text: &str) -> Option<String> {
     // Try to find ```json ... ``` block first
     if let Some(start) = text.find("```json") {
         let after_marker = &text[start + 7..];
-        if let Some(end) = after_marker.find("```") {
+        if let Some(end) = find_closing_fence(after_marker) {
             return Some(after_marker[..end].trim().to_string());
         }
     }
@@ -1387,7 +1402,7 @@ fn extract_json_from_text(text: &str) -> Option<String> {
     // Try to find ``` ... ``` block
     if let Some(start) = text.find("```") {
         let after_marker = &text[start + 3..];
-        if let Some(end) = after_marker.find("```") {
+        if let Some(end) = find_closing_fence(after_marker) {
             let content = after_marker[..end].trim();
             // Skip language identifier if present
             let json_content = if content.starts_with('{') {
@@ -2298,5 +2313,55 @@ line2"}"#;
         assert_eq!(output.edits[0].file, "src/main.rs");
         assert!(output.edits[0].old.contains("hello"));
         assert!(output.edits[0].new.contains("goodbye"));
+    }
+
+    #[test]
+    fn test_parse_edits_with_backticks_in_content() {
+        // JSON content might contain ``` which should not be mistaken for the closing fence.
+        // The closing fence must be on its own line.
+        let text = r#"Here's the fix:
+
+```json
+{
+  "edits": [
+    {
+      "file": "src/main.rs",
+      "old": "context.push_str(\"```\\n\");",
+      "new": "context.push_str(\"~~~\\n\");"
+    }
+  ],
+  "summary": "Changed backticks to tildes"
+}
+```"#;
+
+        let result = parse_edits(text);
+        assert!(
+            result.is_ok(),
+            "parse_edits should handle backticks in content: {:?}",
+            result.err()
+        );
+
+        let output = result.unwrap();
+        assert_eq!(output.edits.len(), 1);
+        assert!(output.edits[0].old.contains("```"));
+        assert!(output.edits[0].new.contains("~~~"));
+    }
+
+    #[test]
+    fn test_find_closing_fence() {
+        // Normal case: fence on its own line
+        assert_eq!(find_closing_fence("\n{\"a\": 1}\n```"), Some(9));
+
+        // Backticks inside content should be ignored
+        assert_eq!(find_closing_fence("\n{\"a\": \"```\"}\n```"), Some(13));
+
+        // Fence at start (empty content)
+        assert_eq!(find_closing_fence("```"), Some(0));
+
+        // No fence
+        assert_eq!(find_closing_fence("{\"a\": 1}"), None);
+
+        // Backticks not at line start
+        assert_eq!(find_closing_fence("\n{\"code\": \"x```y\"}\n```"), Some(18));
     }
 }
