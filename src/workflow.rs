@@ -1432,7 +1432,9 @@ fn extract_json_from_text(text: &str) -> Option<String> {
 /// Parse edits from LLM output
 fn parse_edits(text: &str) -> Result<AgenticOutput> {
     let json_str = extract_json_from_text(text).context("No JSON found in output")?;
-    serde_json::from_str(&json_str).context("Failed to parse edits JSON")
+    serde_json::from_str(&json_str)
+        .or_else(|_| serde_json::from_str(&sanitize_json_strings(&json_str)))
+        .context("Failed to parse edits JSON")
 }
 
 /// Apply file edits
@@ -2257,5 +2259,38 @@ line2"}"#;
 
         let err = parse_for_each_array("steps.plan.output", &results).unwrap_err();
         assert!(err.to_string().contains("not an array"));
+    }
+
+    #[test]
+    fn test_parse_edits_with_literal_newlines() {
+        // LLMs sometimes output literal newlines in JSON strings instead of \n escapes
+        // This is invalid JSON but parse_edits should handle it via sanitization
+        let text = r#"Here's the fix:
+
+```json
+{
+  "edits": [
+    {
+      "file": "src/main.rs",
+      "old": "fn main() {
+    println!(\"hello\");
+}",
+      "new": "fn main() {
+    println!(\"goodbye\");
+}"
+    }
+  ],
+  "summary": "Changed greeting"
+}
+```"#;
+
+        let result = parse_edits(text);
+        assert!(result.is_ok(), "parse_edits should handle literal newlines");
+
+        let output = result.unwrap();
+        assert_eq!(output.edits.len(), 1);
+        assert_eq!(output.edits[0].file, "src/main.rs");
+        assert!(output.edits[0].old.contains("hello"));
+        assert!(output.edits[0].new.contains("goodbye"));
     }
 }
