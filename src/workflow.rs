@@ -1555,35 +1555,52 @@ pub async fn list_workflows() -> Result<Vec<(PathBuf, Workflow)>> {
 
 async fn load_workflows_from_dir(dir: &Path) -> Result<Vec<(PathBuf, Workflow)>> {
     let mut workflows = Vec::new();
+    let mut consecutive_errors = 0u32;
+    const MAX_CONSECUTIVE_ERRORS: u32 = 10;
 
     let mut entries = tokio::fs::read_dir(dir).await?;
     loop {
-        let entry = match entries.next_entry().await {
-            Ok(Some(e)) => e,
-            Ok(None) => break,
+        match entries.next_entry().await {
+            Ok(Some(entry)) => {
+                consecutive_errors = 0; // Reset on success
+                let path = entry.path();
+                if path.extension().map(|e| e == "toml").unwrap_or(false) {
+                    match load_workflow(&path).await {
+                        Ok(workflow) => workflows.push((path, workflow)),
+                        Err(e) => {
+                            eprintln!(
+                                "{} Failed to load {}: {}",
+                                "warning:".yellow(),
+                                path.display(),
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(None) => break, // End of directory
             Err(e) => {
+                consecutive_errors += 1;
                 eprintln!(
-                    "{} Error reading directory entry in {}: {}",
+                    "{} Error reading directory entry ({}/{}): {}",
                     "warning:".yellow(),
-                    dir.display(),
+                    consecutive_errors,
+                    MAX_CONSECUTIVE_ERRORS,
                     e
                 );
-                continue;
-            }
-        };
-        let path = entry.path();
-
-        if path.extension().map(|e| e == "toml").unwrap_or(false) {
-            match load_workflow(&path).await {
-                Ok(workflow) => workflows.push((path, workflow)),
-                Err(e) => {
-                    eprintln!(
-                        "{} Failed to load {}: {}",
-                        "warning:".yellow(),
-                        path.display(),
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                    anyhow::bail!(
+                        "Too many consecutive errors ({}) reading directory {}: {}",
+                        consecutive_errors,
+                        dir.display(),
                         e
                     );
                 }
+                // Backoff: 10ms * error_count to avoid hammering on transient failures
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    10 * consecutive_errors as u64,
+                ))
+                .await;
             }
         }
     }
