@@ -1596,7 +1596,7 @@ async fn load_workflows_from_dir(dir: &Path) -> Result<Vec<(PathBuf, Workflow)>>
                         e
                     );
                 }
-                // Backoff: 10ms * error_count to avoid hammering on transient failures
+                // Linear delay: 10ms * error_count to avoid hammering on transient filesystem issues
                 tokio::time::sleep(std::time::Duration::from_millis(
                     10 * consecutive_errors as u64,
                 ))
