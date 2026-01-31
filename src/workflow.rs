@@ -1557,7 +1557,20 @@ async fn load_workflows_from_dir(dir: &Path) -> Result<Vec<(PathBuf, Workflow)>>
     let mut workflows = Vec::new();
 
     let mut entries = tokio::fs::read_dir(dir).await?;
-    while let Some(entry) = entries.next_entry().await? {
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(e) => {
+                eprintln!(
+                    "{} Error reading directory entry in {}: {}",
+                    "warning:".yellow(),
+                    dir.display(),
+                    e
+                );
+                continue;
+            }
+        };
         let path = entry.path();
 
         if path.extension().map(|e| e == "toml").unwrap_or(false) {
