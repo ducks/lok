@@ -708,7 +708,7 @@ impl WorkflowRunner {
                                                     "⚠".yellow()
                                                 );
                                             } else {
-                                                match apply_edits(&agentic.edits, &cwd) {
+                                                match apply_edits(&agentic.edits, &cwd).await {
                                                     Ok(count) => {
                                                         println!(
                                                             "    {} Applied {} edit(s)",
@@ -1436,18 +1436,19 @@ fn parse_edits(text: &str) -> Result<AgenticOutput> {
 }
 
 /// Apply file edits
-fn apply_edits(edits: &[FileEdit], cwd: &Path) -> Result<usize> {
+async fn apply_edits(edits: &[FileEdit], cwd: &Path) -> Result<usize> {
     let mut applied = 0;
 
     for edit in edits {
         let file_path = cwd.join(&edit.file);
 
-        if !file_path.exists() {
+        if tokio::fs::metadata(&file_path).await.is_err() {
             anyhow::bail!("File not found: {}", edit.file);
         }
 
-        let content =
-            std::fs::read_to_string(&file_path).context(format!("Failed to read {}", edit.file))?;
+        let content = tokio::fs::read_to_string(&file_path)
+            .await
+            .context(format!("Failed to read {}", edit.file))?;
 
         if !content.contains(&edit.old) {
             anyhow::bail!(
@@ -1458,7 +1459,8 @@ fn apply_edits(edits: &[FileEdit], cwd: &Path) -> Result<usize> {
         }
 
         let new_content = content.replace(&edit.old, &edit.new);
-        std::fs::write(&file_path, new_content)
+        tokio::fs::write(&file_path, new_content)
+            .await
             .context(format!("Failed to write {}", edit.file))?;
 
         println!("    {} {}", "edited".green(), edit.file);
@@ -1469,10 +1471,10 @@ fn apply_edits(edits: &[FileEdit], cwd: &Path) -> Result<usize> {
 }
 
 /// Find workflow file by name, checking project-local and global paths
-pub fn find_workflow(name: &str) -> Result<PathBuf> {
+pub async fn find_workflow(name: &str) -> Result<PathBuf> {
     // If it's already a path, use it directly
     let path = Path::new(name);
-    if path.exists() {
+    if tokio::fs::metadata(path).await.is_ok() {
         return Ok(path.to_path_buf());
     }
 
@@ -1485,14 +1487,14 @@ pub fn find_workflow(name: &str) -> Result<PathBuf> {
 
     // Check project-local .lok/workflows/
     let local_path = PathBuf::from(".lok/workflows").join(&filename);
-    if local_path.exists() {
+    if tokio::fs::metadata(&local_path).await.is_ok() {
         return Ok(local_path);
     }
 
     // Check global ~/.config/lok/workflows/
     if let Some(home) = dirs::home_dir() {
         let global_path = home.join(".config/lok/workflows").join(&filename);
-        if global_path.exists() {
+        if tokio::fs::metadata(&global_path).await.is_ok() {
             return Ok(global_path);
         }
     }
@@ -1506,34 +1508,35 @@ pub fn find_workflow(name: &str) -> Result<PathBuf> {
 }
 
 /// List all available workflows
-pub fn list_workflows() -> Result<Vec<(PathBuf, Workflow)>> {
+pub async fn list_workflows() -> Result<Vec<(PathBuf, Workflow)>> {
     let mut workflows = Vec::new();
 
     // Check project-local
     let local_dir = PathBuf::from(".lok/workflows");
-    if local_dir.exists() {
-        workflows.extend(load_workflows_from_dir(&local_dir)?);
+    if tokio::fs::metadata(&local_dir).await.is_ok() {
+        workflows.extend(load_workflows_from_dir(&local_dir).await?);
     }
 
     // Check global
     if let Some(home) = dirs::home_dir() {
         let global_dir = home.join(".config/lok/workflows");
-        if global_dir.exists() {
-            workflows.extend(load_workflows_from_dir(&global_dir)?);
+        if tokio::fs::metadata(&global_dir).await.is_ok() {
+            workflows.extend(load_workflows_from_dir(&global_dir).await?);
         }
     }
 
     Ok(workflows)
 }
 
-fn load_workflows_from_dir(dir: &Path) -> Result<Vec<(PathBuf, Workflow)>> {
+async fn load_workflows_from_dir(dir: &Path) -> Result<Vec<(PathBuf, Workflow)>> {
     let mut workflows = Vec::new();
 
-    for entry in std::fs::read_dir(dir)?.flatten() {
+    let mut entries = tokio::fs::read_dir(dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
 
         if path.extension().map(|e| e == "toml").unwrap_or(false) {
-            match load_workflow(&path) {
+            match load_workflow(&path).await {
                 Ok(workflow) => workflows.push((path, workflow)),
                 Err(e) => {
                     eprintln!(
@@ -1551,17 +1554,18 @@ fn load_workflows_from_dir(dir: &Path) -> Result<Vec<(PathBuf, Workflow)>> {
 }
 
 /// Load a workflow from a TOML file, resolving any `extends` inheritance
-pub fn load_workflow(path: &Path) -> Result<Workflow> {
-    load_workflow_with_depth(path, 0)
+pub async fn load_workflow(path: &Path) -> Result<Workflow> {
+    load_workflow_with_depth(path, 0).await
 }
 
 /// Load workflow with recursion depth tracking to prevent infinite loops
-fn load_workflow_with_depth(path: &Path, depth: usize) -> Result<Workflow> {
+async fn load_workflow_with_depth(path: &Path, depth: usize) -> Result<Workflow> {
     if depth > 10 {
         anyhow::bail!("Workflow inheritance depth exceeded (max 10) - possible circular extends");
     }
 
-    let content = std::fs::read_to_string(path)
+    let content = tokio::fs::read_to_string(path)
+        .await
         .with_context(|| format!("Failed to read workflow file: {}", path.display()))?;
 
     let mut workflow: Workflow = toml::from_str(&content)
@@ -1569,14 +1573,14 @@ fn load_workflow_with_depth(path: &Path, depth: usize) -> Result<Workflow> {
 
     // Handle extends inheritance
     if let Some(ref parent_name) = workflow.extends {
-        let parent_path = find_workflow(parent_name).with_context(|| {
+        let parent_path = find_workflow(parent_name).await.with_context(|| {
             format!(
                 "Failed to find parent workflow '{}' for extends",
                 parent_name
             )
         })?;
 
-        let parent = load_workflow_with_depth(&parent_path, depth + 1)?;
+        let parent = Box::pin(load_workflow_with_depth(&parent_path, depth + 1)).await?;
         workflow = merge_workflows(parent, workflow);
     }
 

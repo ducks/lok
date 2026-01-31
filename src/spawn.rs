@@ -33,10 +33,10 @@ pub struct Spawn {
 }
 
 impl Spawn {
-    pub fn new(config: &Config, cwd: &Path) -> Result<Self> {
+    pub async fn new(config: &Config, cwd: &Path) -> Result<Self> {
         Ok(Self {
             config: config.clone(),
-            cwd: crate::utils::canonicalize_or_warn(cwd),
+            cwd: crate::utils::canonicalize_async(cwd).await,
             delegator: Delegator::new(),
         })
     }

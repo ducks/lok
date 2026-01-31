@@ -4,8 +4,8 @@ use colored::Colorize;
 use std::path::{Path, PathBuf};
 
 /// Attempts to canonicalize a path, logging a warning and returning the original path on failure.
-pub fn canonicalize_or_warn(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|e| {
+pub async fn canonicalize_async(path: &Path) -> PathBuf {
+    tokio::fs::canonicalize(path).await.unwrap_or_else(|e| {
         eprintln!(
             "{} Failed to canonicalize path '{}': {}",
             "warning:".yellow(),

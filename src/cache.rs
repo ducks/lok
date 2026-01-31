@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fmt;
+// std::fs only used in tests for setup
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -206,14 +208,14 @@ impl Cache {
     }
 
     /// Get cached results if valid
-    pub fn get(&mut self, key: &str) -> Option<Vec<QueryResult>> {
+    pub async fn get(&mut self, key: &str) -> Option<Vec<QueryResult>> {
         if !self.enabled {
             return None;
         }
 
         let path = self.dir.join(format!("{}.json", key));
 
-        let content = match fs::read_to_string(&path) {
+        let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
             Err(e) => {
@@ -245,7 +247,7 @@ impl Cache {
 
         if now - entry.timestamp > self.ttl.as_secs() {
             // Expired, remove it
-            if let Err(e) = fs::remove_file(&path) {
+            if let Err(e) = tokio::fs::remove_file(&path).await {
                 self.warn(CacheOperation::Delete, Some(&path), e);
             }
             return None;
@@ -255,7 +257,7 @@ impl Cache {
     }
 
     /// Store results in cache
-    pub fn set(&mut self, key: &str, results: &[QueryResult]) {
+    pub async fn set(&mut self, key: &str, results: &[QueryResult]) {
         if !self.enabled {
             return;
         }
@@ -274,7 +276,7 @@ impl Cache {
         };
 
         // Ensure cache directory exists
-        if let Err(e) = fs::create_dir_all(&self.dir) {
+        if let Err(e) = tokio::fs::create_dir_all(&self.dir).await {
             let dir = self.dir.clone();
             self.warn(CacheOperation::Init, Some(&dir), e);
             return;
@@ -295,7 +297,7 @@ impl Cache {
             }
         };
 
-        if let Err(e) = fs::write(&path, content) {
+        if let Err(e) = tokio::fs::write(&path, content).await {
             self.warn(CacheOperation::Write, Some(&path), e);
         }
     }
@@ -335,8 +337,8 @@ mod tests {
         assert_ne!(key1, key2);
     }
 
-    #[test]
-    fn test_cache_disabled() {
+    #[tokio::test]
+    async fn test_cache_disabled() {
         let config = CacheConfig {
             enabled: false,
             ttl_hours: 24,
@@ -351,13 +353,13 @@ mod tests {
         }];
 
         // Should not cache when disabled
-        cache.set("key", &results);
-        assert!(cache.get("key").is_none());
+        cache.set("key", &results).await;
+        assert!(cache.get("key").await.is_none());
         assert!(!cache.has_warnings());
     }
 
-    #[test]
-    fn test_cache_warnings_on_parse_failure() {
+    #[tokio::test]
+    async fn test_cache_warnings_on_parse_failure() {
         let config = CacheConfig::default();
         let mut cache = Cache::new(&config);
 
@@ -369,7 +371,7 @@ mod tests {
         fs::write(&path, "not valid json").unwrap();
 
         // Should warn on parse failure
-        let result = cache.get("bad_key");
+        let result = cache.get("bad_key").await;
         assert!(result.is_none());
         assert!(cache.has_warnings());
 
@@ -378,8 +380,8 @@ mod tests {
         assert_eq!(warnings[0].operation, CacheOperation::Parse);
     }
 
-    #[test]
-    fn test_cache_warnings_deduplicated() {
+    #[tokio::test]
+    async fn test_cache_warnings_deduplicated() {
         let config = CacheConfig::default();
         let mut cache = Cache::new(&config);
 
@@ -391,9 +393,9 @@ mod tests {
         fs::write(&path, "not valid json").unwrap();
 
         // Multiple reads should deduplicate warnings
-        cache.get("bad_key");
-        cache.get("bad_key");
-        cache.get("bad_key");
+        cache.get("bad_key").await;
+        cache.get("bad_key").await;
+        cache.get("bad_key").await;
 
         let warnings = cache.take_warnings();
         assert_eq!(warnings.len(), 1);
