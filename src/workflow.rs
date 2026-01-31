@@ -1432,9 +1432,15 @@ fn extract_json_from_text(text: &str) -> Option<String> {
 /// Parse edits from LLM output
 fn parse_edits(text: &str) -> Result<AgenticOutput> {
     let json_str = extract_json_from_text(text).context("No JSON found in output")?;
-    serde_json::from_str(&json_str)
-        .or_else(|_| serde_json::from_str(&sanitize_json_strings(&json_str)))
-        .context("Failed to parse edits JSON")
+    serde_json::from_str(&json_str).or_else(|first_err| {
+        serde_json::from_str(&sanitize_json_strings(&json_str)).map_err(|second_err| {
+            anyhow::anyhow!(
+                "Failed to parse edits JSON.\nFirst attempt: {}\nAfter sanitization: {}",
+                first_err,
+                second_err
+            )
+        })
+    })
 }
 
 /// Apply file edits
