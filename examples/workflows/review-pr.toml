@@ -125,16 +125,20 @@ Analyze the reviews and output JSON. Here is the EXACT format to use:
   "important": "- First important issue\n- Second important issue",
   "minor": "- First minor issue",
   "summary": "Summary sentence here.",
-  "followups": []
+  "followups": [
+    {"title": "Issue title", "body": "Issue description", "label": "bug"},
+    {"title": "Another issue", "body": "Description", "label": "enhancement"}
+  ]
 }
 
 CRITICAL RULES:
 1. verdict must be exactly one of: APPROVE, NEEDS_WORK, REQUEST_CHANGES
 2. critical/important/minor must be STRINGS, not arrays
 3. Use "None" if no issues, or "- item one\n- item two" for multiple
-4. NEVER use ["item"] array syntax - always use string with dashes
-5. followups is an array only if BOTH reviewers found incomplete work
-6. Output ONLY the JSON, no markdown, no explanation
+4. NEVER use ["item"] array syntax for critical/important/minor - always use string with dashes
+5. followups MUST include ALL critical and important issues as separate trackable items
+6. Each followup needs: title (short), body (detailed description with file paths), label (bug/enhancement)
+7. Output ONLY the JSON, no markdown, no explanation
 """
 
 [[steps]]
@@ -165,13 +169,15 @@ name = "create_followups"
 backend = "claude"
 depends_on = ["synthesize"]
 prompt = """
-Based on this review synthesis, create GitHub issues for any follow-up work needed.
+The synthesize step found these issues. Create a gh issue command for EACH followup.
 
-Synthesis:
+Synthesis JSON:
 {{ steps.synthesize.output }}
 
-If there are followups in the JSON, output shell commands to create them.
-If no followups needed, output exactly: echo "No follow-up issues needed"
+RULES:
+1. Create ONE gh issue command for EACH item in the followups array
+2. Do NOT skip any followups - every single one must become an issue
+3. If followups array is empty, output: echo "No follow-up issues needed"
 
 YOUR OUTPUT MUST BE RAW SHELL COMMANDS ONLY.
 
@@ -180,19 +186,17 @@ DO NOT:
 - Add any markdown formatting
 - Add any explanation text
 - Use backticks anywhere
+- Skip or consolidate followups
 
 DO:
-- Output raw gh commands directly
+- Output one gh issue create command per followup
 - Use single quotes for --body content
-- Avoid single quotes in the body text itself
+- Replace any single quotes in body text with double quotes
+- Include the label from each followup
 
 CORRECT OUTPUT EXAMPLE:
-gh issue create --title "Fix X" --body 'Description here' --label bug
-
-WRONG OUTPUT (DO NOT DO THIS):
-```bash
-gh issue create --title "Fix X" --body 'Description'
-```
+gh issue create --title "Fix async conversion" --body 'The file src/foo.rs needs async conversion' --label bug
+gh issue create --title "Add tests" --body 'Missing test coverage for bar module' --label enhancement
 """
 
 [[steps]]
