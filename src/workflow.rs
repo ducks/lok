@@ -1575,16 +1575,51 @@ pub async fn list_workflows() -> Result<Vec<(PathBuf, Workflow)>> {
     Ok(workflows)
 }
 
+/// Tracks consecutive errors during directory iteration with backoff logic.
+///
+/// Extracted to enable unit testing of error handling behavior.
+#[derive(Debug)]
+struct LoadErrorTracker {
+    consecutive_errors: u32,
+    max_errors: u32,
+}
+
+impl LoadErrorTracker {
+    fn new(max_errors: u32) -> Self {
+        Self {
+            consecutive_errors: 0,
+            max_errors,
+        }
+    }
+
+    fn on_success(&mut self) {
+        self.consecutive_errors = 0;
+    }
+
+    /// Returns Ok(backoff_ms) to continue, Err(()) if should bail.
+    fn on_error(&mut self) -> Result<u64, ()> {
+        self.consecutive_errors += 1;
+        if self.consecutive_errors >= self.max_errors {
+            Err(())
+        } else {
+            Ok(10 * self.consecutive_errors as u64)
+        }
+    }
+
+    fn error_count(&self) -> u32 {
+        self.consecutive_errors
+    }
+}
+
 async fn load_workflows_from_dir(dir: &Path) -> Result<Vec<(PathBuf, Workflow)>> {
     let mut workflows = Vec::new();
-    let mut consecutive_errors = 0u32;
-    const MAX_CONSECUTIVE_ERRORS: u32 = 10;
+    let mut tracker = LoadErrorTracker::new(10);
 
     let mut entries = tokio::fs::read_dir(dir).await?;
     loop {
         match entries.next_entry().await {
             Ok(Some(entry)) => {
-                consecutive_errors = 0; // Reset on success
+                tracker.on_success();
                 let path = entry.path();
                 if path.extension().map(|e| e == "toml").unwrap_or(false) {
                     match load_workflow(&path).await {
@@ -1601,29 +1636,26 @@ async fn load_workflows_from_dir(dir: &Path) -> Result<Vec<(PathBuf, Workflow)>>
                 }
             }
             Ok(None) => break, // End of directory
-            Err(e) => {
-                consecutive_errors += 1;
-                eprintln!(
-                    "{} Error reading directory entry ({}/{}): {}",
-                    "warning:".yellow(),
-                    consecutive_errors,
-                    MAX_CONSECUTIVE_ERRORS,
-                    e
-                );
-                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+            Err(e) => match tracker.on_error() {
+                Ok(backoff_ms) => {
+                    eprintln!(
+                        "{} Error reading directory entry ({}/{}): {}",
+                        "warning:".yellow(),
+                        tracker.error_count(),
+                        10,
+                        e
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                }
+                Err(()) => {
                     anyhow::bail!(
                         "Too many consecutive errors ({}) reading directory {}: {}",
-                        consecutive_errors,
+                        tracker.error_count(),
                         dir.display(),
                         e
                     );
                 }
-                // Backoff: 10ms * error_count to avoid hammering on transient failures
-                tokio::time::sleep(std::time::Duration::from_millis(
-                    10 * consecutive_errors as u64,
-                ))
-                .await;
-            }
+            },
         }
     }
 
@@ -2522,5 +2554,71 @@ line2"}"#;
 
         // Backticks not at line start
         assert_eq!(find_closing_fence("\n{\"code\": \"x```y\"}\n```"), Some(18));
+    }
+
+    // LoadErrorTracker tests (Issue #125)
+
+    #[test]
+    fn test_load_error_tracker_backoff_progression() {
+        let mut tracker = LoadErrorTracker::new(10);
+
+        // First error: backoff 10ms
+        assert_eq!(tracker.on_error(), Ok(10));
+        assert_eq!(tracker.error_count(), 1);
+
+        // Second error: backoff 20ms
+        assert_eq!(tracker.on_error(), Ok(20));
+        assert_eq!(tracker.error_count(), 2);
+
+        // Third error: backoff 30ms
+        assert_eq!(tracker.on_error(), Ok(30));
+        assert_eq!(tracker.error_count(), 3);
+    }
+
+    #[test]
+    fn test_load_error_tracker_bail_at_threshold() {
+        let mut tracker = LoadErrorTracker::new(10);
+
+        // 9 errors should succeed with increasing backoff
+        for i in 1..10 {
+            assert_eq!(tracker.on_error(), Ok(10 * i));
+        }
+
+        // 10th error should bail
+        assert_eq!(tracker.on_error(), Err(()));
+        assert_eq!(tracker.error_count(), 10);
+    }
+
+    #[test]
+    fn test_load_error_tracker_reset_on_success() {
+        let mut tracker = LoadErrorTracker::new(10);
+
+        // Accumulate 5 errors
+        for _ in 0..5 {
+            let _ = tracker.on_error();
+        }
+        assert_eq!(tracker.error_count(), 5);
+
+        // Success resets counter
+        tracker.on_success();
+        assert_eq!(tracker.error_count(), 0);
+
+        // Next error starts fresh at 10ms, not 60ms
+        assert_eq!(tracker.on_error(), Ok(10));
+        assert_eq!(tracker.error_count(), 1);
+    }
+
+    #[test]
+    fn test_load_error_tracker_success_with_no_prior_errors() {
+        let mut tracker = LoadErrorTracker::new(10);
+
+        // Calling on_success with no prior errors should not panic
+        tracker.on_success();
+        assert_eq!(tracker.error_count(), 0);
+
+        // Multiple successes are fine
+        tracker.on_success();
+        tracker.on_success();
+        assert_eq!(tracker.error_count(), 0);
     }
 }
