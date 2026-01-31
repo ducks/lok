@@ -1938,6 +1938,66 @@ line2"}"#;
         );
     }
 
+    #[test]
+    fn test_group_by_depth_forward_declared_dependency() {
+        // Issue #130: Test that steps depending on forward-declared steps are handled correctly.
+        // "early_step" is defined first but depends on "late_step" which is defined second.
+        // The depth calculation should still work correctly regardless of definition order.
+        let steps = vec![
+            Step {
+                name: "early_step".to_string(),
+                backend: String::new(),
+                prompt: String::new(),
+                depends_on: vec!["late_step".to_string()], // depends on step defined later
+                when: None,
+                shell: Some("echo early".to_string()),
+                apply_edits: false,
+                verify: None,
+                retries: 0,
+                retry_delay: 1000,
+                for_each: None,
+                output_format: None,
+            },
+            Step {
+                name: "late_step".to_string(),
+                backend: String::new(),
+                prompt: String::new(),
+                depends_on: vec![], // no dependencies
+                when: None,
+                shell: Some("echo late".to_string()),
+                apply_edits: false,
+                verify: None,
+                retries: 0,
+                retry_delay: 1000,
+                for_each: None,
+                output_format: None,
+            },
+        ];
+
+        let config = crate::config::Config::default();
+        let runner = WorkflowRunner::new(config, std::path::PathBuf::from("/tmp"), vec![]);
+        let levels = runner.group_by_depth(&steps, "test-workflow").unwrap();
+
+        // late_step has no dependencies, so it should be at depth 0
+        // early_step depends on late_step, so it should be at depth 1
+        assert_eq!(
+            levels.len(),
+            2,
+            "Expected 2 depth levels, got: {:?}",
+            levels
+        );
+        assert!(
+            levels[0].contains(&"late_step".to_string()),
+            "late_step should be at depth 0, got levels: {:?}",
+            levels
+        );
+        assert!(
+            levels[1].contains(&"early_step".to_string()),
+            "early_step should be at depth 1, got levels: {:?}",
+            levels
+        );
+    }
+
     fn make_test_results() -> HashMap<String, StepResult> {
         let mut results = HashMap::new();
         results.insert(
