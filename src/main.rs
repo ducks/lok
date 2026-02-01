@@ -1221,7 +1221,10 @@ async fn run_explain(
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
                 let truncated = if content.len() > 3000 {
-                    format!("{}...\n[truncated]", &content[..3000])
+                    format!(
+                        "{}...\n[truncated]",
+                        crate::utils::truncate_utf8(&content, 3000)
+                    )
                 } else {
                     content
                 };
@@ -1247,7 +1250,10 @@ async fn run_explain(
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
                 let truncated = if content.len() > 2000 {
-                    format!("{}...\n[truncated]", &content[..2000])
+                    format!(
+                        "{}...\n[truncated]",
+                        crate::utils::truncate_utf8(&content, 2000)
+                    )
                 } else {
                     content
                 };
