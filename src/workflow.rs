@@ -67,14 +67,18 @@ static CONDITION_LEGACY_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r#"steps\.([a-zA-Z0-9_-]+)\.output\s+contains\s+['"](.+)['"]"#).unwrap()
 });
 
-/// Regex for matching contains(step.output, "string") conditions
+/// Regex for matching contains(step.field, "string") conditions
+/// Captures: (1) step name, (2) field name, (3) search string
 static CONDITION_CONTAINS_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r#"contains\(\s*([a-zA-Z0-9_-]+)\.output\s*,\s*['"](.+)['"]\s*\)"#).unwrap()
+    regex::Regex::new(r#"contains\(\s*([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_]+)\s*,\s*['"](.+)['"]\s*\)"#)
+        .unwrap()
 });
 
-/// Regex for matching equals(step.output, "string") conditions
+/// Regex for matching equals(step.field, "string") conditions
+/// Captures: (1) step name, (2) field name, (3) expected value
 static CONDITION_EQUALS_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r#"equals\(\s*([a-zA-Z0-9_-]+)\.output\s*,\s*['"](.+)['"]\s*\)"#).unwrap()
+    regex::Regex::new(r#"equals\(\s*([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_]+)\s*,\s*['"](.+)['"]\s*\)"#)
+        .unwrap()
 });
 
 /// Regex for matching not(...) conditions
@@ -1008,23 +1012,41 @@ impl WorkflowRunner {
             return !self.evaluate_condition(inner, results);
         }
 
-        // Handle contains(step.output, "string")
+        // Handle contains(step.field, "string")
         if let Some(caps) = CONDITION_CONTAINS_RE.captures(condition) {
             let step_name = caps.get(1).unwrap().as_str();
-            let search_str = caps.get(2).unwrap().as_str();
+            let field_name = caps.get(2).unwrap().as_str();
+            let search_str = caps.get(3).unwrap().as_str();
             return results
                 .get(step_name)
-                .map(|r| r.output.contains(search_str))
+                .map(|r| {
+                    let value = if field_name == "output" {
+                        r.output.clone()
+                    } else {
+                        // Extract JSON field from output
+                        extract_json_field(&r.output, field_name).unwrap_or_default()
+                    };
+                    value.contains(search_str)
+                })
                 .unwrap_or(false);
         }
 
-        // Handle equals(step.output, "string")
+        // Handle equals(step.field, "string")
         if let Some(caps) = CONDITION_EQUALS_RE.captures(condition) {
             let step_name = caps.get(1).unwrap().as_str();
-            let expected = caps.get(2).unwrap().as_str();
+            let field_name = caps.get(2).unwrap().as_str();
+            let expected = caps.get(3).unwrap().as_str();
             return results
                 .get(step_name)
-                .map(|r| r.output.trim() == expected)
+                .map(|r| {
+                    let value = if field_name == "output" {
+                        r.output.trim().to_string()
+                    } else {
+                        // Extract JSON field from output
+                        extract_json_field(&r.output, field_name).unwrap_or_default()
+                    };
+                    value == expected
+                })
                 .unwrap_or(false);
         }
 
@@ -2092,6 +2114,51 @@ line2"}"#;
         // Unparseable conditions default to true (step runs)
         assert!(runner.evaluate_condition("some random text", &results));
         assert!(runner.evaluate_condition("", &results));
+    }
+
+    #[test]
+    fn test_condition_json_field_access() {
+        let config = Config::default();
+        let runner = WorkflowRunner::new(config, PathBuf::from("."), vec![]);
+        let mut results = HashMap::new();
+        results.insert(
+            "fix".to_string(),
+            StepResult {
+                name: "fix".to_string(),
+                output: r#"{"action": "close", "reason": "Already fixed"}"#.to_string(),
+                parsed_output: None,
+                success: true,
+                elapsed_ms: 100,
+                backend: Some("claude".to_string()),
+            },
+        );
+        results.insert(
+            "fix2".to_string(),
+            StepResult {
+                name: "fix2".to_string(),
+                output: r#"{"action": "fix", "summary": "Fixed the bug"}"#.to_string(),
+                parsed_output: None,
+                success: true,
+                elapsed_ms: 100,
+                backend: Some("claude".to_string()),
+            },
+        );
+
+        // JSON field access: equals(step.field, "value")
+        assert!(runner.evaluate_condition(r#"equals(fix.action, "close")"#, &results));
+        assert!(!runner.evaluate_condition(r#"equals(fix.action, "fix")"#, &results));
+        assert!(runner.evaluate_condition(r#"equals(fix2.action, "fix")"#, &results));
+        assert!(!runner.evaluate_condition(r#"equals(fix2.action, "close")"#, &results));
+
+        // JSON field access: contains(step.field, "substring")
+        assert!(runner.evaluate_condition(r#"contains(fix.reason, "Already")"#, &results));
+        assert!(!runner.evaluate_condition(r#"contains(fix.reason, "NotHere")"#, &results));
+
+        // .output still works as before
+        assert!(runner.evaluate_condition(r#"contains(fix.output, "action")"#, &results));
+
+        // Missing field returns false
+        assert!(!runner.evaluate_condition(r#"equals(fix.missing_field, "value")"#, &results));
     }
 
     #[test]
