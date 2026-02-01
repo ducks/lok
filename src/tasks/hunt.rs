@@ -499,10 +499,104 @@ fn truncate_title(title: &str) -> String {
     let clean = result.trim();
 
     // Safe truncation respecting UTF-8 character boundaries
-    if clean.chars().count() > 80 {
-        let truncated: String = clean.chars().take(77).collect();
+    // Single iteration: count chars while building truncated version
+    let mut char_count = 0;
+    let mut truncated = String::new();
+    for c in clean.chars() {
+        char_count += 1;
+        if char_count <= 77 {
+            truncated.push(c);
+        }
+    }
+
+    if char_count > 80 {
         format!("{}...", truncated)
     } else {
         clean.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_title_removes_markdown_bold() {
+        assert_eq!(truncate_title("**bold text**"), "bold text");
+        assert_eq!(truncate_title("some **bold** words"), "some bold words");
+    }
+
+    #[test]
+    fn test_truncate_title_removes_markdown_heading() {
+        assert_eq!(truncate_title("## heading"), "heading");
+        assert_eq!(truncate_title("## Issue: something"), "Issue: something");
+    }
+
+    #[test]
+    fn test_truncate_title_short_string_unchanged() {
+        assert_eq!(truncate_title("short title"), "short title");
+        assert_eq!(truncate_title("hello world"), "hello world");
+    }
+
+    #[test]
+    fn test_truncate_title_exactly_80_chars() {
+        let title = "a".repeat(80);
+        assert_eq!(truncate_title(&title), title);
+    }
+
+    #[test]
+    fn test_truncate_title_81_chars_truncates() {
+        let title = "a".repeat(81);
+        let expected = format!("{}...", "a".repeat(77));
+        assert_eq!(truncate_title(&title), expected);
+    }
+
+    #[test]
+    fn test_truncate_title_long_string_truncates() {
+        let title = "a".repeat(100);
+        let expected = format!("{}...", "a".repeat(77));
+        assert_eq!(truncate_title(&title), expected);
+    }
+
+    #[test]
+    fn test_truncate_title_utf8_emoji() {
+        // Each emoji is one character but multiple bytes
+        let emoji = "🎉".repeat(50);
+        assert_eq!(emoji.chars().count(), 50);
+        // Should not truncate (under 80 chars)
+        assert_eq!(truncate_title(&emoji), emoji);
+    }
+
+    #[test]
+    fn test_truncate_title_utf8_emoji_truncates() {
+        // 85 emojis = 85 characters, should truncate to 77 + "..."
+        let emoji = "🎉".repeat(85);
+        let expected = format!("{}...", "🎉".repeat(77));
+        assert_eq!(truncate_title(&emoji), expected);
+    }
+
+    #[test]
+    fn test_truncate_title_mixed_ascii_utf8() {
+        // Mix of ASCII and multi-byte characters near boundary
+        let title = format!("Bug in {} code", "文".repeat(75));
+        // 75 Chinese chars + 12 ASCII = 87 chars, should truncate
+        let result = truncate_title(&title);
+        assert!(result.ends_with("..."));
+        // Result should be 77 chars + "..." = 80 chars displayed
+        assert_eq!(result.chars().count(), 80);
+    }
+
+    #[test]
+    fn test_truncate_title_trims_whitespace() {
+        assert_eq!(truncate_title("  spaced  "), "spaced");
+        assert_eq!(truncate_title("\t\ttabbed\t\t"), "tabbed");
+    }
+
+    #[test]
+    fn test_truncate_title_combined() {
+        // Markdown removal + truncation + whitespace
+        let title = format!("  **{}**  ", "x".repeat(100));
+        let expected = format!("{}...", "x".repeat(77));
+        assert_eq!(truncate_title(&title), expected);
     }
 }
