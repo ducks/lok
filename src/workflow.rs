@@ -1497,15 +1497,23 @@ async fn apply_edits(edits: &[FileEdit], cwd: &Path) -> Result<usize> {
             }
         };
 
-        if !content.contains(&edit.old) {
+        let match_count = content.matches(&edit.old).count();
+        if match_count == 0 {
             anyhow::bail!(
                 "Old text not found in {}: {}",
                 edit.file,
                 edit.old.chars().take(50).collect::<String>()
             );
         }
+        if match_count > 1 {
+            anyhow::bail!(
+                "Ambiguous edit: old text appears {} times in {}. Make the edit more specific.",
+                match_count,
+                edit.file
+            );
+        }
 
-        let new_content = content.replace(&edit.old, &edit.new);
+        let new_content = content.replacen(&edit.old, &edit.new, 1);
         tokio::fs::write(&file_path, new_content)
             .await
             .context(format!("Failed to write {}", edit.file))?;
@@ -1761,6 +1769,7 @@ pub fn format_results(results: &[StepResult]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_extract_json_from_markdown_block() {
@@ -2620,5 +2629,84 @@ line2"}"#;
         tracker.on_success();
         tracker.on_success();
         assert_eq!(tracker.error_count(), 0);
+    }
+
+    // apply_edits tests (Issue #135)
+
+    #[tokio::test]
+    async fn test_apply_edits_single_occurrence() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.txt");
+        std::fs::write(&file_path, "hello world").unwrap();
+
+        let edits = vec![FileEdit {
+            file: "test.txt".to_string(),
+            old: "world".to_string(),
+            new: "universe".to_string(),
+        }];
+
+        let result = apply_edits(&edits, dir.path()).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "hello universe");
+    }
+
+    #[tokio::test]
+    async fn test_apply_edits_multiple_occurrences_fails() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.txt");
+        std::fs::write(&file_path, "foo bar foo baz foo").unwrap();
+
+        let edits = vec![FileEdit {
+            file: "test.txt".to_string(),
+            old: "foo".to_string(),
+            new: "qux".to_string(),
+        }];
+
+        let result = apply_edits(&edits, dir.path()).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Ambiguous edit"));
+        assert!(err.contains("3 times"));
+
+        // File should be unchanged
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "foo bar foo baz foo");
+    }
+
+    #[tokio::test]
+    async fn test_apply_edits_not_found_fails() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.txt");
+        std::fs::write(&file_path, "hello world").unwrap();
+
+        let edits = vec![FileEdit {
+            file: "test.txt".to_string(),
+            old: "not_present".to_string(),
+            new: "replacement".to_string(),
+        }];
+
+        let result = apply_edits(&edits, dir.path()).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Old text not found"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_edits_file_not_found_fails() {
+        let dir = tempdir().unwrap();
+
+        let edits = vec![FileEdit {
+            file: "nonexistent.txt".to_string(),
+            old: "foo".to_string(),
+            new: "bar".to_string(),
+        }];
+
+        let result = apply_edits(&edits, dir.path()).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("File not found"));
     }
 }
