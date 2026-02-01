@@ -480,11 +480,29 @@ fn parse_findings(results: &[QueryResult]) -> Vec<Finding> {
 
 fn truncate_title(title: &str) -> String {
     // GitHub issue titles have a limit, and we want them readable
-    let clean = title.replace("**", "").replace("##", "").trim().to_string();
+    // Single-pass removal of "**" and "##" patterns using Peekable iterator
+    let mut result = String::with_capacity(title.len());
+    let mut chars = title.chars().peekable();
 
-    if clean.len() > 80 {
-        format!("{}...", &clean[..77])
+    while let Some(c) = chars.next() {
+        match c {
+            '*' if chars.peek() == Some(&'*') => {
+                chars.next();
+            }
+            '#' if chars.peek() == Some(&'#') => {
+                chars.next();
+            }
+            _ => result.push(c),
+        }
+    }
+
+    let clean = result.trim();
+
+    // Safe truncation respecting UTF-8 character boundaries
+    if clean.chars().count() > 80 {
+        let truncated: String = clean.chars().take(77).collect();
+        format!("{}...", truncated)
     } else {
-        clean
+        clean.to_string()
     }
 }
