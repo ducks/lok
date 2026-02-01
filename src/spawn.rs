@@ -141,7 +141,14 @@ Rules:
                     "Unexpected response shape from Claude API. Expected content[0].text.\n\
                     Response preview:\n{}",
                     if response_preview.len() > 500 {
-                        format!("{}...", &response_preview[..500])
+                        // Truncate at UTF-8 char boundary (~500 bytes)
+                        let truncate_at = response_preview
+                            .char_indices()
+                            .take_while(|(i, _)| *i <= 500)
+                            .last()
+                            .map(|(i, c)| i + c.len_utf8())
+                            .unwrap_or(response_preview.len().min(500));
+                        format!("{}...", &response_preview[..truncate_at])
                     } else {
                         response_preview
                     }
