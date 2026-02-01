@@ -141,14 +141,7 @@ Rules:
                     "Unexpected response shape from Claude API. Expected content[0].text.\n\
                     Response preview:\n{}",
                     if response_preview.len() > 500 {
-                        // Truncate at UTF-8 char boundary (~500 bytes)
-                        let truncate_at = response_preview
-                            .char_indices()
-                            .take_while(|(i, _)| *i <= 500)
-                            .last()
-                            .map(|(i, c)| i + c.len_utf8())
-                            .unwrap_or(response_preview.len().min(500));
-                        format!("{}...", &response_preview[..truncate_at])
+                        format!("{}...", crate::utils::truncate_utf8(&response_preview, 500))
                     } else {
                         response_preview
                     }
@@ -200,14 +193,7 @@ AGENT: frontend | Build the UI"#,
 
         if tasks.is_empty() {
             let text_preview = if text.len() > 300 {
-                // Find last valid UTF-8 boundary at or before 300 bytes
-                let truncate_at = text
-                    .char_indices()
-                    .take_while(|(i, _)| *i <= 300)
-                    .last()
-                    .map(|(i, c)| i + c.len_utf8())
-                    .unwrap_or(text.len().min(300));
-                format!("{}...", &text[..truncate_at])
+                format!("{}...", crate::utils::truncate_utf8(text, 300))
             } else {
                 text.to_string()
             };
@@ -348,7 +334,7 @@ AGENT: frontend | Build the UI"#,
             let display_output = if result.output.len() > 500 {
                 format!(
                     "{}...\n[truncated, {} chars total]",
-                    &result.output.chars().take(500).collect::<String>(),
+                    crate::utils::truncate_utf8(&result.output, 500),
                     result.output.len()
                 )
             } else {
