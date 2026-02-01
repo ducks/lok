@@ -147,6 +147,40 @@ shell = "gh issue comment 123 --body '{{ steps.deep-dive.output }}'"
 | `review-pr` | Multi-backend PR review with consensus verdict |
 | `full-heal` | Autonomous: hunt bugs, fix, PR, review, merge |
 
+### Consensus and Error Handling
+
+For multi-backend steps, you can require consensus and handle partial failures:
+
+```toml
+[[steps]]
+name = "propose_claude"
+backend = "claude"
+continue_on_error = true    # Don't fail workflow if this step times out
+timeout = 300000            # 5 minute timeout (milliseconds)
+prompt = "Propose a fix..."
+
+[[steps]]
+name = "propose_codex"
+backend = "codex"
+continue_on_error = true
+timeout = 300000
+prompt = "Propose a fix..."
+
+[[steps]]
+name = "debate"
+backend = "claude"
+depends_on = ["propose_claude", "propose_codex", "propose_gemini"]
+min_deps_success = 2        # Need at least 2/3 backends to succeed
+prompt = "Synthesize the proposals: {{ steps.propose_claude.output }}..."
+```
+
+When `min_deps_success` is set:
+- Step runs if at least N dependencies succeeded
+- Failed dependencies with `continue_on_error` pass their error output to the prompt
+- Logs "consensus reached (2/3 succeeded)" when threshold is met
+
+This prevents wasted tokens when one backend times out or hits rate limits.
+
 ### Agentic Features
 
 Workflows can apply code edits and verify them:
