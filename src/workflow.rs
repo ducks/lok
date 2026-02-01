@@ -103,6 +103,9 @@ static ARG_RE: LazyLock<regex::Regex> =
 static WORKFLOW_BACKENDS_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\{\{\s*workflow\.backends\s*\}\}").unwrap());
 
+/// Default timeout for workflow steps in milliseconds (2 minutes)
+const DEFAULT_STEP_TIMEOUT_MS: u64 = 120_000;
+
 /// Regex for detecting unknown {{ ... }} variables after all substitutions
 static UNKNOWN_VAR_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\{\{\s*([^}]+)\s*\}\}").unwrap());
@@ -590,7 +593,7 @@ impl WorkflowRunner {
                         let start = std::time::Instant::now();
 
                         // Calculate timeout duration (default 120s, 0 means no timeout)
-                        let timeout_ms = step_timeout.unwrap_or(120_000);
+                        let timeout_ms = step_timeout.unwrap_or(DEFAULT_STEP_TIMEOUT_MS);
                         let timeout_duration = if timeout_ms == 0 {
                             std::time::Duration::from_secs(365 * 24 * 60 * 60) // 1 year = effectively no timeout
                         } else {
