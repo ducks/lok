@@ -35,7 +35,7 @@ shell = "gh pr view {{ arg.1 }} --json comments --jq '.comments[].body'"
 [[steps]]
 name = "fetch-reviews"
 depends_on = ["checkout"]
-shell = "gh api repos/{owner}/{repo}/pulls/{{ arg.1 }}/reviews --jq '.[].body'"
+shell = "gh pr view {{ arg.1 }} --json reviews --jq '.reviews[].body'"
 
 [[steps]]
 name = "propose_claude"
@@ -138,9 +138,12 @@ Rules:
 name = "commit"
 depends_on = ["fix"]
 shell = """
-git add -A && git commit -m "address review feedback: {{ steps.fix.summary }}
+git add -A && git commit -m "$(cat <<'EOF'
+address review feedback: {{ steps.fix.summary }}
 
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+EOF
+)"
 """
 
 [[steps]]
