@@ -221,6 +221,13 @@ pub struct Step {
     #[serde(default)]
     pub continue_on_error: bool,
 
+    // Consensus requirement
+    /// Minimum number of dependencies that must succeed (default: all)
+    /// Useful for consensus-based steps like debate/synthesize that can work with partial results
+    /// Example: min_deps_success = 2 means at least 2 of the dependencies must succeed
+    #[serde(default)]
+    pub min_deps_success: Option<usize>,
+
     // Timeout
     /// Timeout for this step in milliseconds (default: 120000 = 2 minutes)
     #[serde(default)]
@@ -424,7 +431,59 @@ impl WorkflowRunner {
                     );
                 }
 
-                if !hard_failed_deps.is_empty() {
+                // Check consensus requirement if set
+                if let Some(min_success) = step.min_deps_success {
+                    let successful_deps = step
+                        .depends_on
+                        .iter()
+                        .filter(|dep| {
+                            results
+                                .get(dep.as_str())
+                                .map(|r| r.success)
+                                .unwrap_or(false)
+                        })
+                        .count();
+
+                    if successful_deps < min_success {
+                        let msg = format!(
+                            "Consensus not reached: {}/{} dependencies succeeded (need {})",
+                            successful_deps,
+                            step.depends_on.len(),
+                            min_success
+                        );
+                        if step.continue_on_error {
+                            println!("{} {} ({})", "[skip]".yellow(), step.name.bold(), msg);
+                            let skip_result = StepResult {
+                                name: step.name.clone(),
+                                output: format!("Skipped: {}", msg),
+                                parsed_output: None,
+                                success: false,
+                                elapsed_ms: 0,
+                                backend: None,
+                            };
+                            results.insert(step.name.clone(), skip_result.clone());
+                            ordered_results.push(skip_result);
+                            continue;
+                        } else {
+                            anyhow::bail!(
+                                "Workflow '{}' failed: step '{}' - {}",
+                                workflow.name,
+                                step.name,
+                                msg
+                            );
+                        }
+                    } else {
+                        // Consensus reached, skip hard failure check since we have enough
+                        if !soft_failed_deps.is_empty() || !hard_failed_deps.is_empty() {
+                            println!(
+                                "  {} consensus reached ({}/{} succeeded)",
+                                "✓".green(),
+                                successful_deps,
+                                step.depends_on.len()
+                            );
+                        }
+                    }
+                } else if !hard_failed_deps.is_empty() {
                     if step.continue_on_error {
                         println!(
                             "{} {} (dependency failed: {})",
@@ -2169,6 +2228,7 @@ line2"}"#;
                 for_each: None,
                 output_format: None,
                 continue_on_error: false,
+                min_deps_success: None,
                 timeout: None,
             },
             Step {
@@ -2185,6 +2245,7 @@ line2"}"#;
                 for_each: None,
                 output_format: None,
                 continue_on_error: false,
+                min_deps_success: None,
                 timeout: None,
             },
         ];
@@ -2228,6 +2289,7 @@ line2"}"#;
                 for_each: None,
                 output_format: None,
                 continue_on_error: false,
+                min_deps_success: None,
                 timeout: None,
             },
             Step {
@@ -2244,6 +2306,7 @@ line2"}"#;
                 for_each: None,
                 output_format: None,
                 continue_on_error: false,
+                min_deps_success: None,
                 timeout: None,
             },
         ];
