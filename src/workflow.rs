@@ -55,8 +55,8 @@ use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::LazyLock;
+use tokio::process::Command;
 
 /// Regex for matching {{ steps.NAME.output }} patterns
 static INTERPOLATE_RE: LazyLock<regex::Regex> =
@@ -220,6 +220,11 @@ pub struct Step {
     /// If true, workflow continues even if this step fails (default: false)
     #[serde(default)]
     pub continue_on_error: bool,
+
+    // Timeout
+    /// Timeout for this step in milliseconds (default: 120000 = 2 minutes)
+    #[serde(default)]
+    pub timeout: Option<u64>,
 }
 
 fn default_retry_delay() -> u64 {
@@ -475,10 +480,15 @@ impl WorkflowRunner {
                     let apply_edits_flag = step.apply_edits;
                     let max_retries = step.retries;
                     let retry_delay = step.retry_delay;
+                    let step_timeout = step.timeout;
 
                     async move {
                         println!("{} {}", "[step]".cyan(), step_name.bold());
                         let start = std::time::Instant::now();
+
+                        // Calculate timeout duration (default 120s)
+                        let timeout_ms = step_timeout.unwrap_or(120_000);
+                        let timeout_duration = std::time::Duration::from_millis(timeout_ms);
 
                         // Handle for_each loop steps
                         if let Some(items) = for_each_items {
@@ -508,13 +518,18 @@ impl WorkflowRunner {
 
                                 // Shell iteration
                                 if let Some(ref shell_cmd) = iter_shell {
-                                    match run_shell(shell_cmd, &cwd) {
-                                        Ok(output) => {
+                                    match tokio::time::timeout(timeout_duration, run_shell(shell_cmd, &cwd)).await {
+                                        Ok(Ok(output)) => {
                                             iter_output = output;
                                             iter_success = true;
                                         }
-                                        Err(e) => {
+                                        Ok(Err(e)) => {
                                             iter_output = format!("Error: {}", e);
+                                            iter_success = false;
+                                            all_success = false;
+                                        }
+                                        Err(_) => {
+                                            iter_output = format!("Error: Step timed out after {}s", timeout_duration.as_secs());
                                             iter_success = false;
                                             all_success = false;
                                         }
@@ -553,13 +568,18 @@ impl WorkflowRunner {
                                         }
                                     };
 
-                                    match backend.query(&iter_prompt, &cwd).await {
-                                        Ok(text) => {
+                                    match tokio::time::timeout(timeout_duration, backend.query(&iter_prompt, &cwd)).await {
+                                        Ok(Ok(text)) => {
                                             iter_output = text;
                                             iter_success = true;
                                         }
-                                        Err(e) => {
+                                        Ok(Err(e)) => {
                                             iter_output = format!("Error: {}", e);
+                                            iter_success = false;
+                                            all_success = false;
+                                        }
+                                        Err(_) => {
+                                            iter_output = format!("Error: Step timed out after {}s", timeout_duration.as_secs());
                                             iter_success = false;
                                             all_success = false;
                                         }
@@ -616,8 +636,8 @@ impl WorkflowRunner {
                                     tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                                 }
 
-                                match run_shell(shell_cmd, &cwd) {
-                                    Ok(output) => {
+                                match tokio::time::timeout(timeout_duration, run_shell(shell_cmd, &cwd)).await {
+                                    Ok(Ok(output)) => {
                                         let elapsed_ms = start.elapsed().as_millis() as u64;
                                         println!(
                                             "  {} ({:.1}s)",
@@ -637,7 +657,7 @@ impl WorkflowRunner {
                                             backend: None,
                                         };
                                     }
-                                    Err(e) => {
+                                    Ok(Err(e)) => {
                                         last_error = e.to_string();
                                         if attempt == max_retries {
                                             let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -652,6 +672,22 @@ impl WorkflowRunner {
                                             };
                                         }
                                         println!("  {} {} (will retry)", "⚠".yellow(), e);
+                                    }
+                                    Err(_) => {
+                                        last_error = format!("Step timed out after {}s", timeout_duration.as_secs());
+                                        if attempt == max_retries {
+                                            let elapsed_ms = start.elapsed().as_millis() as u64;
+                                            println!("  {} timed out after {}s", "✗".red(), timeout_duration.as_secs());
+                                            return StepResult {
+                                                name: step_name,
+                                                output: format!("Error: {}", last_error),
+                                                parsed_output: None,
+                                                success: false,
+                                                elapsed_ms,
+                                                backend: None,
+                                            };
+                                        }
+                                        println!("  {} timed out (will retry)", "⚠".yellow());
                                     }
                                 }
                             }
@@ -727,13 +763,13 @@ impl WorkflowRunner {
                                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                             }
 
-                            match backend.query(&prompt, &cwd).await {
-                                Ok(t) => {
+                            match tokio::time::timeout(timeout_duration, backend.query(&prompt, &cwd)).await {
+                                Ok(Ok(t)) => {
                                     text = t;
                                     query_success = true;
                                     break;
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     last_error = e.to_string();
                                     if attempt == max_retries {
                                         let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -748,6 +784,22 @@ impl WorkflowRunner {
                                         };
                                     }
                                     println!("  {} {} (will retry)", "⚠".yellow(), e);
+                                }
+                                Err(_) => {
+                                    last_error = format!("Step timed out after {}s", timeout_duration.as_secs());
+                                    if attempt == max_retries {
+                                        let elapsed_ms = start.elapsed().as_millis() as u64;
+                                        println!("  {} timed out after {}s", "✗".red(), timeout_duration.as_secs());
+                                        return StepResult {
+                                            name: step_name,
+                                            output: format!("Error: {}", last_error),
+                                            parsed_output: None,
+                                            success: false,
+                                            elapsed_ms,
+                                            backend: Some(backend_name),
+                                        };
+                                    }
+                                    println!("  {} timed out (will retry)", "⚠".yellow());
                                 }
                             }
                         }
@@ -821,7 +873,7 @@ impl WorkflowRunner {
                                 // Run format before verify if requested
                                 if let Some(ref format_cmd) = format {
                                     println!("  {} {}", "format:".dimmed(), format_cmd.dimmed());
-                                    match run_shell(format_cmd, &cwd) {
+                                    match run_shell(format_cmd, &cwd).await {
                                         Ok(_) => {
                                             println!("    {} Format complete", "✓".green());
                                         }
@@ -839,7 +891,7 @@ impl WorkflowRunner {
                                 // Run verification if requested
                                 if let Some(ref verify_cmd) = verify {
                                     println!("  {} {}", "verify:".dimmed(), verify_cmd.dimmed());
-                                    match run_shell(verify_cmd, &cwd) {
+                                    match run_shell(verify_cmd, &cwd).await {
                                         Ok(_) => {
                                             println!("    {} Verification passed", "✓".green());
                                         }
@@ -1364,12 +1416,13 @@ fn parse_for_each_array(
 }
 
 /// Run a shell command and return output
-fn run_shell(cmd: &str, cwd: &Path) -> Result<String> {
+async fn run_shell(cmd: &str, cwd: &Path) -> Result<String> {
     let output = Command::new("sh")
         .arg("-c")
         .arg(cmd)
         .current_dir(cwd)
         .output()
+        .await
         .context("Failed to execute shell command")?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -2028,6 +2081,7 @@ line2"}"#;
                 for_each: None,
                 output_format: None,
                 continue_on_error: false,
+                timeout: None,
             },
             Step {
                 name: "fetch".to_string(), // duplicate!
@@ -2043,6 +2097,7 @@ line2"}"#;
                 for_each: None,
                 output_format: None,
                 continue_on_error: false,
+                timeout: None,
             },
         ];
 
@@ -2085,6 +2140,7 @@ line2"}"#;
                 for_each: None,
                 output_format: None,
                 continue_on_error: false,
+                timeout: None,
             },
             Step {
                 name: "late_step".to_string(),
@@ -2100,6 +2156,7 @@ line2"}"#;
                 for_each: None,
                 output_format: None,
                 continue_on_error: false,
+                timeout: None,
             },
         ];
 
