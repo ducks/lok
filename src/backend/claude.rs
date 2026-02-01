@@ -160,6 +160,7 @@ impl ClaudeBackend {
         cmd.arg("--") // Prevent prompt from being interpreted as flags
             .arg(prompt)
             .current_dir(cwd)
+            .kill_on_drop(true)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
