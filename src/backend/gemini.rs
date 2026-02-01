@@ -58,6 +58,7 @@ impl super::Backend for GeminiBackend {
         cmd.arg("-c")
             .arg(&shell_cmd)
             .current_dir(cwd)
+            .kill_on_drop(true)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
