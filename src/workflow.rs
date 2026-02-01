@@ -486,15 +486,13 @@ impl WorkflowRunner {
                         println!("{} {}", "[step]".cyan(), step_name.bold());
                         let start = std::time::Instant::now();
 
-                        // Calculate timeout duration (default 120s, minimum 1ms)
+                        // Calculate timeout duration (default 120s, 0 means no timeout)
                         let timeout_ms = step_timeout.unwrap_or(120_000);
-                        let timeout_ms = if timeout_ms == 0 {
-                            eprintln!("    {} Warning: timeout=0 is invalid, using 1ms minimum", "⚠".yellow());
-                            1
+                        let timeout_duration = if timeout_ms == 0 {
+                            std::time::Duration::from_secs(365 * 24 * 60 * 60) // 1 year = effectively no timeout
                         } else {
-                            timeout_ms
+                            std::time::Duration::from_millis(timeout_ms)
                         };
-                        let timeout_duration = std::time::Duration::from_millis(timeout_ms);
 
                         // Handle for_each loop steps
                         if let Some(items) = for_each_items {

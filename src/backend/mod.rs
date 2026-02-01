@@ -167,13 +167,18 @@ pub async fn run_query_with_config(
         }
     };
 
-    // Helper to get timeout for a backend
+    // Helper to get timeout for a backend (0 means no timeout)
     let get_timeout = |backend_name: &str| -> u64 {
-        config
+        let timeout = config
             .backends
             .get(backend_name)
             .and_then(|b| b.timeout)
-            .unwrap_or(default_timeout)
+            .unwrap_or(default_timeout);
+        if timeout == 0 {
+            365 * 24 * 60 * 60 // 1 year = effectively no timeout
+        } else {
+            timeout
+        }
     };
 
     let results = if parallel {
