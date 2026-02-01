@@ -522,7 +522,7 @@ impl WorkflowRunner {
 
                                 // Shell iteration
                                 if let Some(ref shell_cmd) = iter_shell {
-                                    match tokio::time::timeout(timeout_duration, run_shell(shell_cmd, &cwd)).await {
+                                    match tokio::time::timeout(timeout_duration, run_shell(shell_cmd, &cwd, self.config.defaults.command_wrapper.as_deref())).await {
                                         Ok(Ok(output)) => {
                                             iter_output = output;
                                             iter_success = true;
@@ -640,7 +640,7 @@ impl WorkflowRunner {
                                     tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                                 }
 
-                                match tokio::time::timeout(timeout_duration, run_shell(shell_cmd, &cwd)).await {
+                                match tokio::time::timeout(timeout_duration, run_shell(shell_cmd, &cwd, self.config.defaults.command_wrapper.as_deref())).await {
                                     Ok(Ok(output)) => {
                                         let elapsed_ms = start.elapsed().as_millis() as u64;
                                         println!(
@@ -877,7 +877,7 @@ impl WorkflowRunner {
                                 // Run format before verify if requested
                                 if let Some(ref format_cmd) = format {
                                     println!("  {} {}", "format:".dimmed(), format_cmd.dimmed());
-                                    match tokio::time::timeout(timeout_duration, run_shell(format_cmd, &cwd)).await {
+                                    match tokio::time::timeout(timeout_duration, run_shell(format_cmd, &cwd, self.config.defaults.command_wrapper.as_deref())).await {
                                         Ok(Ok(_)) => {
                                             println!("    {} Format complete", "✓".green());
                                         }
@@ -899,7 +899,7 @@ impl WorkflowRunner {
                                 // Run verification if requested
                                 if let Some(ref verify_cmd) = verify {
                                     println!("  {} {}", "verify:".dimmed(), verify_cmd.dimmed());
-                                    match tokio::time::timeout(timeout_duration, run_shell(verify_cmd, &cwd)).await {
+                                    match tokio::time::timeout(timeout_duration, run_shell(verify_cmd, &cwd, self.config.defaults.command_wrapper.as_deref())).await {
                                         Ok(Ok(_)) => {
                                             println!("    {} Verification passed", "✓".green());
                                         }
@@ -1438,10 +1438,18 @@ fn parse_for_each_array(
 }
 
 /// Run a shell command and return output
-async fn run_shell(cmd: &str, cwd: &Path) -> Result<String> {
+/// If wrapper is provided (e.g., "nix-shell --run '{cmd}'"), the command will be wrapped
+async fn run_shell(cmd: &str, cwd: &Path, wrapper: Option<&str>) -> Result<String> {
+    // Apply wrapper if provided
+    let final_cmd = if let Some(w) = wrapper {
+        w.replace("{cmd}", cmd)
+    } else {
+        cmd.to_string()
+    };
+
     let child = Command::new("sh")
         .arg("-c")
-        .arg(cmd)
+        .arg(&final_cmd)
         .current_dir(cwd)
         .kill_on_drop(true)
         .stdout(std::process::Stdio::piped())
@@ -1458,7 +1466,7 @@ async fn run_shell(cmd: &str, cwd: &Path) -> Result<String> {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     if !output.status.success() {
-        anyhow::bail!("Shell command failed: {}\n{}", cmd, stderr);
+        anyhow::bail!("Shell command failed: {}\n{}", final_cmd, stderr);
     }
 
     Ok(format!("{}{}", stdout, stderr).trim().to_string())

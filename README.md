@@ -172,6 +172,9 @@ Works without config. For customization, create `lok.toml` or
 [defaults]
 parallel = true
 timeout = 300
+# Wrap shell commands for isolated environments (NixOS, Docker)
+# command_wrapper = "nix-shell --run '{cmd}'"
+# command_wrapper = "docker exec dev sh -c '{cmd}'"
 
 [backends.codex]
 enabled = true
@@ -187,6 +190,25 @@ model = "qwen2.5-coder:7b"
 enabled = true
 ttl_hours = 24
 ```
+
+### Command Wrapper (NixOS/Docker)
+
+If you use isolated environments, shell commands in workflows may fail due to
+missing dependencies. Use `command_wrapper` to wrap all shell commands:
+
+```toml
+[defaults]
+# For NixOS with nix-shell
+command_wrapper = "nix-shell --run '{cmd}'"
+
+# For Docker
+command_wrapper = "docker exec dev sh -c '{cmd}'"
+
+# For direnv
+command_wrapper = "direnv exec . {cmd}"
+```
+
+The `{cmd}` placeholder is replaced with the actual command.
 
 ## Backend Strengths
 
