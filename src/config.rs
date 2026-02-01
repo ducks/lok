@@ -24,6 +24,10 @@ pub struct Defaults {
     pub parallel: bool,
     #[serde(default = "default_timeout")]
     pub timeout: u64,
+    /// Optional wrapper for shell commands (e.g., "nix-shell --run '{cmd}'" or "docker exec dev sh -c '{cmd}'")
+    /// The {cmd} placeholder will be replaced with the actual command
+    #[serde(default)]
+    pub command_wrapper: Option<String>,
 }
 
 fn default_parallel() -> bool {
@@ -39,6 +43,7 @@ impl Default for Defaults {
         Self {
             parallel: default_parallel(),
             timeout: default_timeout(),
+            command_wrapper: None,
         }
     }
 }
@@ -421,5 +426,39 @@ prompt = "Check code style"
         assert_eq!(original.defaults.timeout, deserialized.defaults.timeout);
         assert_eq!(original.backends.len(), deserialized.backends.len());
         assert_eq!(original.tasks.len(), deserialized.tasks.len());
+    }
+
+    #[test]
+    fn test_command_wrapper_config() {
+        let toml_str = r#"
+[defaults]
+command_wrapper = "nix-shell --run '{cmd}'"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(
+            config.defaults.command_wrapper,
+            Some("nix-shell --run '{cmd}'".to_string())
+        );
+    }
+
+    #[test]
+    fn test_command_wrapper_default_none() {
+        let config = Config::default();
+        assert!(config.defaults.command_wrapper.is_none());
+    }
+
+    #[test]
+    fn test_command_wrapper_docker_example() {
+        let toml_str = r#"
+[defaults]
+command_wrapper = "docker exec dev sh -c '{cmd}'"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(
+            config.defaults.command_wrapper,
+            Some("docker exec dev sh -c '{cmd}'".to_string())
+        );
     }
 }
