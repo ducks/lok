@@ -368,33 +368,76 @@ impl WorkflowRunner {
                     }
                 }
 
-                // Fail-fast: check if any dependencies failed
-                let failed_deps: Vec<&str> = step
+                // Fail-fast: check if any dependencies had "hard" failures
+                // A "hard" failure = the step failed AND didn't have continue_on_error
+                // A "soft" failure = the step failed BUT had continue_on_error (we proceed with its error output)
+                let hard_failed_deps: Vec<&str> = step
                     .depends_on
                     .iter()
                     .filter(|dep| {
-                        results
+                        // Check if this dependency failed
+                        let dep_failed = results
                             .get(dep.as_str())
                             .map(|r| !r.success)
-                            .unwrap_or(false)
+                            .unwrap_or(false);
+
+                        if !dep_failed {
+                            return false;
+                        }
+
+                        // Check if the dependency step had continue_on_error
+                        // If it did, this is a "soft" failure and we should proceed
+                        let dep_had_continue_on_error = step_map
+                            .get(dep.as_str())
+                            .map(|s| s.continue_on_error)
+                            .unwrap_or(false);
+
+                        // Only a "hard" failure if the dep didn't have continue_on_error
+                        !dep_had_continue_on_error
                     })
                     .map(|s| s.as_str())
                     .collect();
 
-                if !failed_deps.is_empty() {
+                // Log soft failures but continue execution
+                let soft_failed_deps: Vec<&str> = step
+                    .depends_on
+                    .iter()
+                    .filter(|dep| {
+                        let dep_failed = results
+                            .get(dep.as_str())
+                            .map(|r| !r.success)
+                            .unwrap_or(false);
+                        let dep_had_continue_on_error = step_map
+                            .get(dep.as_str())
+                            .map(|s| s.continue_on_error)
+                            .unwrap_or(false);
+                        dep_failed && dep_had_continue_on_error
+                    })
+                    .map(|s| s.as_str())
+                    .collect();
+
+                if !soft_failed_deps.is_empty() {
+                    println!(
+                        "  {} proceeding with partial results (soft failures: {})",
+                        "⚠".yellow(),
+                        soft_failed_deps.join(", ")
+                    );
+                }
+
+                if !hard_failed_deps.is_empty() {
                     if step.continue_on_error {
                         println!(
                             "{} {} (dependency failed: {})",
                             "[skip]".yellow(),
                             step.name.bold(),
-                            failed_deps.join(", ")
+                            hard_failed_deps.join(", ")
                         );
                         // Record as skipped but not failed
                         let skip_result = StepResult {
                             name: step.name.clone(),
                             output: format!(
                                 "Skipped: dependency failed ({})",
-                                failed_deps.join(", ")
+                                hard_failed_deps.join(", ")
                             ),
                             parsed_output: None,
                             success: false,
@@ -409,7 +452,7 @@ impl WorkflowRunner {
                             "Workflow '{}' failed: step '{}' depends on failed step(s): {}",
                             workflow.name,
                             step.name,
-                            failed_deps.join(", ")
+                            hard_failed_deps.join(", ")
                         );
                     }
                 }
