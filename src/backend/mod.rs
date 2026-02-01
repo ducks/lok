@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use colored::Colorize;
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -118,6 +118,8 @@ pub async fn run_query_with_config(
     config: &Config,
 ) -> Result<Vec<QueryResult>> {
     let cwd = crate::utils::canonicalize_async(cwd).await;
+    let prompt: Arc<str> = Arc::from(prompt);
+    let cwd: Arc<Path> = Arc::from(cwd.as_path());
     let default_timeout = config.defaults.timeout;
     let parallel = config.defaults.parallel;
 
@@ -130,8 +132,8 @@ pub async fn run_query_with_config(
     );
 
     let query_one = |backend: Arc<dyn Backend>,
-                     prompt: String,
-                     cwd: PathBuf,
+                     prompt: Arc<str>,
+                     cwd: Arc<Path>,
                      pb: ProgressBar,
                      timeout: u64| async move {
         pb.set_message(format!("Querying {}...", backend.name()));
@@ -181,8 +183,8 @@ pub async fn run_query_with_config(
                 let timeout = get_timeout(backend.name());
                 query_one(
                     Arc::clone(backend),
-                    prompt.to_string(),
-                    cwd.clone(),
+                    Arc::clone(&prompt),
+                    Arc::clone(&cwd),
                     pb.clone(),
                     timeout,
                 )
@@ -195,8 +197,8 @@ pub async fn run_query_with_config(
             let timeout = get_timeout(backend.name());
             let result = query_one(
                 Arc::clone(backend),
-                prompt.to_string(),
-                cwd.clone(),
+                Arc::clone(&prompt),
+                Arc::clone(&cwd),
                 pb.clone(),
                 timeout,
             )
