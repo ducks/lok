@@ -179,10 +179,9 @@ AGENT: frontend | Build the UI"#,
 
         for line in text.lines() {
             if let Some(rest) = line.strip_prefix("AGENT:") {
-                let parts: Vec<&str> = rest.splitn(2, '|').collect();
-                if parts.len() == 2 {
-                    let name = parts[0].trim().to_string();
-                    let description = parts[1].trim().to_string();
+                if let Some((name_part, desc_part)) = rest.split_once('|') {
+                    let name = name_part.trim().to_string();
+                    let description = desc_part.trim().to_string();
                     tasks.push(AgentTask {
                         name,
                         description,
@@ -194,7 +193,14 @@ AGENT: frontend | Build the UI"#,
 
         if tasks.is_empty() {
             let text_preview = if text.len() > 300 {
-                format!("{}...", &text[..300])
+                // Find last valid UTF-8 boundary at or before 300 bytes
+                let truncate_at = text
+                    .char_indices()
+                    .take_while(|(i, _)| *i <= 300)
+                    .last()
+                    .map(|(i, c)| i + c.len_utf8())
+                    .unwrap_or(text.len().min(300));
+                format!("{}...", &text[..truncate_at])
             } else {
                 text.to_string()
             };
