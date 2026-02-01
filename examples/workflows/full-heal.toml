@@ -100,7 +100,14 @@ depends_on = ["fix"]
 
 [[steps]]
 name = "commit"
-shell = "git add -A && git commit -m 'fix: {{ steps.fix.summary }}'"
+shell = """
+git add -A && git commit -m "$(cat <<'EOF'
+fix: {{ steps.fix.summary }}
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+EOF
+)"
+"""
 depends_on = ["branch"]
 
 [[steps]]
@@ -156,6 +163,6 @@ Be critical. Only approve if the fix is genuinely correct and safe.
 
 [[steps]]
 name = "merge"
-shell = "gh pr merge --rebase --delete-branch"
+shell = "gh pr merge HEAD --rebase --delete-branch"
 depends_on = ["review"]
-when = "steps.review.output contains '\"approved\": true'"
+if = 'contains(review.output, "\"approved\": true")'
