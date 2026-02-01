@@ -12,6 +12,7 @@
 use crate::backend;
 use crate::config::Config;
 use crate::context::{resolve_format_command, resolve_verify_command, CodebaseContext};
+use crate::git_agent;
 use anyhow::{Context, Result};
 use colored::Colorize;
 use thiserror::Error;
@@ -916,8 +917,26 @@ impl WorkflowRunner {
                             println!("  {} ({:.1}s)", "✓".green(), elapsed_ms as f64 / 1000.0);
 
                                 // Apply edits if requested
+                                let mut checkpointed = false;
                                 if apply_edits_flag {
                                     println!("  {} Applying edits...", "→".cyan());
+
+                                    // Create git-agent checkpoint before applying edits
+                                    let checkpoint_msg = format!("pre-edit: {}", step_name);
+                                    match git_agent::checkpoint(&cwd, &checkpoint_msg).await {
+                                        Ok(true) => {
+                                            println!("    {} git-agent checkpoint created", "✓".dimmed());
+                                            checkpointed = true;
+                                        }
+                                        Ok(false) => {
+                                            // git-agent not available or not initialized, continue without
+                                        }
+                                        Err(e) => {
+                                            println!("    {} git-agent checkpoint failed: {}", "⚠".yellow(), e);
+                                            // Continue anyway, just won't have rollback
+                                        }
+                                    }
+
                                     match parse_edits(&text) {
                                         Ok(agentic) => {
                                             if agentic.edits.is_empty() {
@@ -940,6 +959,12 @@ impl WorkflowRunner {
                                                             "✗".red(),
                                                             e
                                                         );
+                                                        // Rollback via git-agent if we checkpointed
+                                                        if checkpointed {
+                                                            if let Ok(true) = git_agent::undo(&cwd).await {
+                                                                println!("    {} Rolled back via git-agent", "↩".cyan());
+                                                            }
+                                                        }
                                                         return StepResult {
                                                             name: step_name,
                                                             output: format!(
@@ -1011,6 +1036,12 @@ impl WorkflowRunner {
                                                 "✗".red(),
                                                 e
                                             );
+                                            // Rollback via git-agent if we checkpointed
+                                            if checkpointed {
+                                                if let Ok(true) = git_agent::undo(&cwd).await {
+                                                    println!("    {} Rolled back via git-agent", "↩".cyan());
+                                                }
+                                            }
                                             return StepResult {
                                                 name: step_name,
                                                 output: format!(
@@ -1025,6 +1056,12 @@ impl WorkflowRunner {
                                         }
                                         Err(_) => {
                                             println!("    {} Verification timed out after {}ms", "⚠".yellow(), timeout_ms);
+                                            // Rollback via git-agent if we checkpointed
+                                            if checkpointed {
+                                                if let Ok(true) = git_agent::undo(&cwd).await {
+                                                    println!("    {} Rolled back via git-agent", "↩".cyan());
+                                                }
+                                            }
                                             return StepResult {
                                                 name: step_name,
                                                 output: format!(

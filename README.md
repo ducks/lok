@@ -285,12 +285,41 @@ Fix this issue. Output JSON:
 - **File not found**: Edit fails if the target file doesn't exist
 - **Text not found**: Edit fails if `old` text isn't in the file
 - **Ambiguous match**: Edit fails if `old` text appears multiple times
-- **No rollback**: Failed edits are not automatically reverted
 - **Partial application**: If edit 3 of 5 fails, edits 1-2 remain applied
+
+**Automatic rollback with git-agent:**
+
+If [git-agent](https://github.com/ducks/git-agent) is installed and initialized,
+lok automatically creates a checkpoint before applying edits. If edits fail or
+verification fails, lok rolls back to the checkpoint.
+
+```bash
+# Install git-agent
+cargo install --git https://github.com/ducks/git-agent
+
+# Initialize in your project
+git-agent init
+git-agent begin "Working on feature X"
+
+# Now lok will auto-checkpoint before apply_edits
+lok run my-workflow  # Creates checkpoint, applies edits, rolls back on failure
+```
+
+When git-agent is active, you'll see:
+```
+  → Applying edits...
+    ✓ git-agent checkpoint created
+    ✓ Applied 3 edit(s)
+  verify: cargo build
+    ✗ Verification failed: ...
+    ↩ Rolled back via git-agent
+```
+
+Without git-agent, lok still works but won't auto-rollback.
 
 **Recommendations:**
 
-- Use version control (commit before running agentic workflows)
+- Use git-agent for automatic rollback on failures
 - Start with `verify` commands to catch bad edits early
 - Review LLM output before running with `--apply` in production
 - Keep `old` text specific enough to match exactly once

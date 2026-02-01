@@ -5,6 +5,7 @@ mod config;
 mod context;
 mod debate;
 mod delegation;
+mod git_agent;
 mod output;
 mod spawn;
 mod tasks;
