@@ -486,8 +486,14 @@ impl WorkflowRunner {
                         println!("{} {}", "[step]".cyan(), step_name.bold());
                         let start = std::time::Instant::now();
 
-                        // Calculate timeout duration (default 120s)
+                        // Calculate timeout duration (default 120s, minimum 1ms)
                         let timeout_ms = step_timeout.unwrap_or(120_000);
+                        let timeout_ms = if timeout_ms == 0 {
+                            eprintln!("    {} Warning: timeout=0 is invalid, using 1ms minimum", "⚠".yellow());
+                            1
+                        } else {
+                            timeout_ms
+                        };
                         let timeout_duration = std::time::Duration::from_millis(timeout_ms);
 
                         // Handle for_each loop steps
@@ -873,11 +879,11 @@ impl WorkflowRunner {
                                 // Run format before verify if requested
                                 if let Some(ref format_cmd) = format {
                                     println!("  {} {}", "format:".dimmed(), format_cmd.dimmed());
-                                    match run_shell(format_cmd, &cwd).await {
-                                        Ok(_) => {
+                                    match tokio::time::timeout(timeout_duration, run_shell(format_cmd, &cwd)).await {
+                                        Ok(Ok(_)) => {
                                             println!("    {} Format complete", "✓".green());
                                         }
-                                        Err(e) => {
+                                        Ok(Err(e)) => {
                                             println!(
                                                 "    {} Format failed: {}",
                                                 "✗".red(),
@@ -885,17 +891,21 @@ impl WorkflowRunner {
                                             );
                                             // Format failure is not fatal, continue to verify
                                         }
+                                        Err(_) => {
+                                            println!("    {} Format timed out after {}ms", "⚠".yellow(), timeout_ms);
+                                            // Format timeout is not fatal, continue to verify
+                                        }
                                     }
                                 }
 
                                 // Run verification if requested
                                 if let Some(ref verify_cmd) = verify {
                                     println!("  {} {}", "verify:".dimmed(), verify_cmd.dimmed());
-                                    match run_shell(verify_cmd, &cwd).await {
-                                        Ok(_) => {
+                                    match tokio::time::timeout(timeout_duration, run_shell(verify_cmd, &cwd)).await {
+                                        Ok(Ok(_)) => {
                                             println!("    {} Verification passed", "✓".green());
                                         }
-                                        Err(e) => {
+                                        Ok(Err(e)) => {
                                             println!(
                                                 "    {} Verification failed: {}",
                                                 "✗".red(),
@@ -906,6 +916,20 @@ impl WorkflowRunner {
                                                 output: format!(
                                                     "Verification failed: {}\n\nOriginal output:\n{}",
                                                     e, text
+                                                ),
+                                                parsed_output: None,
+                                                success: false,
+                                                elapsed_ms,
+                                                backend: Some(backend_name.clone()),
+                                            };
+                                        }
+                                        Err(_) => {
+                                            println!("    {} Verification timed out after {}ms", "⚠".yellow(), timeout_ms);
+                                            return StepResult {
+                                                name: step_name,
+                                                output: format!(
+                                                    "Verification timed out after {}ms\n\nOriginal output:\n{}",
+                                                    timeout_ms, text
                                                 ),
                                                 parsed_output: None,
                                                 success: false,
@@ -1417,13 +1441,20 @@ fn parse_for_each_array(
 
 /// Run a shell command and return output
 async fn run_shell(cmd: &str, cwd: &Path) -> Result<String> {
-    let output = Command::new("sh")
+    let child = Command::new("sh")
         .arg("-c")
         .arg(cmd)
         .current_dir(cwd)
-        .output()
+        .kill_on_drop(true)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("Failed to spawn shell command")?;
+
+    let output = child
+        .wait_with_output()
         .await
-        .context("Failed to execute shell command")?;
+        .context("Failed to wait for shell command")?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
