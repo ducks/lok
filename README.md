@@ -211,6 +211,52 @@ When `min_deps_success` is set:
 
 This prevents wasted tokens when one backend times out or hits rate limits.
 
+### Hard vs Soft Failures
+
+Steps fail in two ways:
+
+- **Hard failure**: Step fails and workflow stops. This is the default behavior.
+- **Soft failure**: Step fails but workflow continues. Enabled with `continue_on_error = true`.
+
+When a soft failure occurs, the error message is passed to dependent steps instead
+of the normal output. This lets downstream steps handle the failure gracefully:
+
+```toml
+[[steps]]
+name = "risky_step"
+backend = "gemini"
+continue_on_error = true   # Soft failure - workflow continues
+prompt = "..."
+
+[[steps]]
+name = "handler"
+depends_on = ["risky_step"]
+prompt = """
+{% if "error" in steps.risky_step.output %}
+Handle the error: {{ steps.risky_step.output }}
+{% else %}
+Process result: {{ steps.risky_step.output }}
+{% endif %}
+"""
+```
+
+### Retries
+
+Steps can retry on transient failures with exponential backoff:
+
+```toml
+[[steps]]
+name = "flaky_backend"
+backend = "gemini"
+retries = 3              # Retry up to 3 times (default: 0)
+retry_delay = 2000       # Start with 2 second delay (default: 1000ms)
+prompt = "..."
+```
+
+The delay doubles after each retry: 2s, 4s, 8s. Retries help with rate limits
+and temporary network issues. After all retries are exhausted, the step fails
+normally (hard or soft depending on `continue_on_error`).
+
 ### Agentic Features
 
 Workflows can apply code edits and verify them:
@@ -225,6 +271,56 @@ prompt = """
 Fix this issue. Output JSON:
 {"edits": [{"file": "src/main.rs", "old": "...", "new": "..."}]}
 """
+```
+
+**How `apply_edits` works:**
+
+1. Parses JSON from LLM output looking for `{"edits": [...]}`
+2. For each edit, finds `old` text in `file` and replaces with `new`
+3. If `verify` is set, runs the command after edits
+4. If verification fails, the step fails (edits remain applied)
+
+**Risks and failure modes:**
+
+- **File not found**: Edit fails if the target file doesn't exist
+- **Text not found**: Edit fails if `old` text isn't in the file
+- **Ambiguous match**: Edit fails if `old` text appears multiple times
+- **No rollback**: Failed edits are not automatically reverted
+- **Partial application**: If edit 3 of 5 fails, edits 1-2 remain applied
+
+**Recommendations:**
+
+- Use version control (commit before running agentic workflows)
+- Start with `verify` commands to catch bad edits early
+- Review LLM output before running with `--apply` in production
+- Keep `old` text specific enough to match exactly once
+
+### Structured Output
+
+Workflows can produce JSON output for programmatic consumption. Use the
+`output_format` field to control how LLM responses are parsed:
+
+```toml
+[[steps]]
+name = "analyze"
+backend = "codex"
+output_format = "json"    # Parse output as JSON
+prompt = "Return findings as JSON array..."
+```
+
+Output format options:
+- `text` (default): Raw text output
+- `json`: Parse as JSON object
+- `json_array`: Parse as JSON array
+- `jsonl`: Parse as newline-delimited JSON
+
+Downstream steps can access parsed fields:
+
+```toml
+[[steps]]
+name = "report"
+depends_on = ["analyze"]
+prompt = "Summarize: {{ steps.analyze.output.findings }}"
 ```
 
 ## Configuration
