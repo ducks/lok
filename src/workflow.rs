@@ -118,6 +118,11 @@ static ITEM_FIELD_RE: LazyLock<regex::Regex> =
 static INDEX_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\{\{\s*index\s*\}\}").unwrap());
 
+/// Regex for matching steps.X.success condition (checks if step succeeded)
+/// Captures: (1) step name
+static CONDITION_SUCCESS_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^steps\.([a-zA-Z0-9_-]+)\.success$").unwrap());
+
 /// Placeholder for escaped braces - uses a pattern unlikely to appear in real content
 const ESCAPED_OPEN_BRACE: &str = "\x00LOK_OPEN_BRACE\x00";
 
@@ -210,6 +215,11 @@ pub struct Step {
     /// How to parse the step output: "text" (default), "json", or "lines"
     #[serde(default)]
     pub output_format: Option<String>,
+
+    // Error handling
+    /// If true, workflow continues even if this step fails (default: false)
+    #[serde(default)]
+    pub continue_on_error: bool,
 }
 
 fn default_retry_delay() -> u64 {
@@ -350,6 +360,52 @@ impl WorkflowRunner {
                             step.name.bold()
                         );
                         continue;
+                    }
+                }
+
+                // Fail-fast: check if any dependencies failed
+                let failed_deps: Vec<&str> = step
+                    .depends_on
+                    .iter()
+                    .filter(|dep| {
+                        results
+                            .get(dep.as_str())
+                            .map(|r| !r.success)
+                            .unwrap_or(false)
+                    })
+                    .map(|s| s.as_str())
+                    .collect();
+
+                if !failed_deps.is_empty() {
+                    if step.continue_on_error {
+                        println!(
+                            "{} {} (dependency failed: {})",
+                            "[skip]".yellow(),
+                            step.name.bold(),
+                            failed_deps.join(", ")
+                        );
+                        // Record as skipped but not failed
+                        let skip_result = StepResult {
+                            name: step.name.clone(),
+                            output: format!(
+                                "Skipped: dependency failed ({})",
+                                failed_deps.join(", ")
+                            ),
+                            parsed_output: None,
+                            success: false,
+                            elapsed_ms: 0,
+                            backend: None,
+                        };
+                        results.insert(step.name.clone(), skip_result.clone());
+                        ordered_results.push(skip_result);
+                        continue;
+                    } else {
+                        anyhow::bail!(
+                            "Workflow '{}' failed: step '{}' depends on failed step(s): {}",
+                            workflow.name,
+                            step.name,
+                            failed_deps.join(", ")
+                        );
                     }
                 }
 
@@ -1058,6 +1114,12 @@ impl WorkflowRunner {
                 .get(step_name)
                 .map(|r| r.output.contains(search_str))
                 .unwrap_or(false);
+        }
+
+        // Handle steps.X.success (check if step succeeded)
+        if let Some(caps) = CONDITION_SUCCESS_RE.captures(condition) {
+            let step_name = caps.get(1).unwrap().as_str();
+            return results.get(step_name).map(|r| r.success).unwrap_or(false);
         }
 
         // Default: if we can't parse, return true (run the step)
@@ -1965,6 +2027,7 @@ line2"}"#;
                 retry_delay: 1000,
                 for_each: None,
                 output_format: None,
+                continue_on_error: false,
             },
             Step {
                 name: "fetch".to_string(), // duplicate!
@@ -1979,6 +2042,7 @@ line2"}"#;
                 retry_delay: 1000,
                 for_each: None,
                 output_format: None,
+                continue_on_error: false,
             },
         ];
 
@@ -2020,6 +2084,7 @@ line2"}"#;
                 retry_delay: 1000,
                 for_each: None,
                 output_format: None,
+                continue_on_error: false,
             },
             Step {
                 name: "late_step".to_string(),
@@ -2034,6 +2099,7 @@ line2"}"#;
                 retry_delay: 1000,
                 for_each: None,
                 output_format: None,
+                continue_on_error: false,
             },
         ];
 
@@ -2708,5 +2774,83 @@ line2"}"#;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("File not found"));
+    }
+
+    // Fail-fast tests (Issue #136)
+
+    #[test]
+    fn test_condition_steps_success() {
+        let config = Config::default();
+        let runner = WorkflowRunner::new(config, PathBuf::from("."), vec![]);
+        let mut results = HashMap::new();
+
+        // Add a successful step
+        results.insert(
+            "step1".to_string(),
+            StepResult {
+                name: "step1".to_string(),
+                output: "output".to_string(),
+                parsed_output: None,
+                success: true,
+                elapsed_ms: 100,
+                backend: Some("claude".to_string()),
+            },
+        );
+
+        // Add a failed step
+        results.insert(
+            "step2".to_string(),
+            StepResult {
+                name: "step2".to_string(),
+                output: "error".to_string(),
+                parsed_output: None,
+                success: false,
+                elapsed_ms: 100,
+                backend: Some("claude".to_string()),
+            },
+        );
+
+        // steps.X.success should return the success field
+        assert!(runner.evaluate_condition("steps.step1.success", &results));
+        assert!(!runner.evaluate_condition("steps.step2.success", &results));
+
+        // Works with not()
+        assert!(!runner.evaluate_condition("not(steps.step1.success)", &results));
+        assert!(runner.evaluate_condition("not(steps.step2.success)", &results));
+
+        // Missing step returns false
+        assert!(!runner.evaluate_condition("steps.missing.success", &results));
+    }
+
+    #[test]
+    fn test_continue_on_error_toml_parsing() {
+        // Test that continue_on_error defaults to false
+        let toml_str = r#"
+            name = "test"
+            backend = "claude"
+            prompt = "test prompt"
+        "#;
+        let step: Step = toml::from_str(toml_str).unwrap();
+        assert!(!step.continue_on_error);
+
+        // Test explicit true
+        let toml_str = r#"
+            name = "test"
+            backend = "claude"
+            prompt = "test prompt"
+            continue_on_error = true
+        "#;
+        let step: Step = toml::from_str(toml_str).unwrap();
+        assert!(step.continue_on_error);
+
+        // Test explicit false
+        let toml_str = r#"
+            name = "test"
+            backend = "claude"
+            prompt = "test prompt"
+            continue_on_error = false
+        "#;
+        let step: Step = toml::from_str(toml_str).unwrap();
+        assert!(!step.continue_on_error);
     }
 }
