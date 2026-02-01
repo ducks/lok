@@ -1442,7 +1442,15 @@ fn parse_for_each_array(
 async fn run_shell(cmd: &str, cwd: &Path, wrapper: Option<&str>) -> Result<String> {
     // Apply wrapper if provided
     let final_cmd = if let Some(w) = wrapper {
-        w.replace("{cmd}", cmd)
+        // If wrapper uses single quotes around {cmd}, escape single quotes in the command
+        // e.g., "nix-shell --run '{cmd}'" with cmd containing ' needs escaping
+        let escaped_cmd = if w.contains("'{cmd}'") {
+            // Escape single quotes for bash: ' -> '\''
+            cmd.replace("'", "'\\''")
+        } else {
+            cmd.to_string()
+        };
+        w.replace("{cmd}", &escaped_cmd)
     } else {
         cmd.to_string()
     };
