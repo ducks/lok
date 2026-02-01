@@ -1,0 +1,63 @@
+# Explain codebase structure
+#
+# Usage:
+#   lok run explain
+#   lok run explain --focus "authentication"
+#
+# Override this workflow by creating .lok/workflows/explain.toml
+
+name = "explain"
+description = "Explain codebase structure and architecture"
+
+[[steps]]
+name = "gather-readme"
+shell = """
+for f in README.md README readme.md README.txt; do
+    if [ -f "$f" ]; then
+        echo "=== $f ==="
+        head -c 3000 "$f"
+        echo ""
+        break
+    fi
+done
+"""
+
+[[steps]]
+name = "gather-manifests"
+shell = """
+for f in Cargo.toml package.json pyproject.toml go.mod Gemfile pom.xml build.gradle; do
+    if [ -f "$f" ]; then
+        echo "=== $f ==="
+        head -c 2000 "$f"
+        echo ""
+    fi
+done
+"""
+
+[[steps]]
+name = "gather-structure"
+shell = '''
+echo "=== Directory Structure ==="
+find . -maxdepth 2 -type f -o -type d | grep -v '/\.' | grep -v node_modules | grep -v target | grep -v vendor | head -50
+'''
+
+[[steps]]
+name = "explain"
+depends_on = ["gather-readme", "gather-manifests", "gather-structure"]
+prompt = """
+Explain the structure and architecture of this codebase. Include:
+
+1. **Purpose**: What does this project do? What problem does it solve?
+2. **Architecture**: How is the code organized? What are the main components?
+3. **Key Files**: Which files are most important for understanding the codebase?
+4. **Entry Points**: Where does execution start? How do you run/use it?
+5. **Dependencies**: What external libraries/services does it rely on?
+
+Be concise but thorough. A developer new to this codebase should understand the big picture after reading your explanation.
+
+{{ steps.gather-readme.output }}
+
+{{ steps.gather-manifests.output }}
+
+{{ steps.gather-structure.output }}
+"""

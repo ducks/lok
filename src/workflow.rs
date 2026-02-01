@@ -1787,12 +1787,36 @@ async fn apply_edits(edits: &[FileEdit], cwd: &Path) -> Result<usize> {
     Ok(applied)
 }
 
-/// Find workflow file by name, checking project-local and global paths
-pub async fn find_workflow(name: &str) -> Result<PathBuf> {
+/// Result of finding a workflow - either a file path or embedded content
+pub enum WorkflowSource {
+    /// Workflow loaded from a file
+    File(PathBuf),
+    /// Workflow embedded in the binary
+    Embedded { name: String, content: &'static str },
+}
+
+impl WorkflowSource {
+    /// Get a display name for this source
+    #[allow(dead_code)]
+    pub fn display_name(&self) -> String {
+        match self {
+            WorkflowSource::File(path) => path.display().to_string(),
+            WorkflowSource::Embedded { name, .. } => format!("embedded:{}", name),
+        }
+    }
+}
+
+/// Load a workflow from its source
+pub async fn load_workflow_from_source(source: WorkflowSource) -> Result<Workflow> {
+    load_workflow_from_source_with_depth(source, 0).await
+}
+
+/// Find workflow by name, checking project-local, global, and embedded workflows
+pub async fn find_workflow(name: &str) -> Result<WorkflowSource> {
     // If it's already a path, use it directly
     let path = Path::new(name);
     if tokio::fs::metadata(path).await.is_ok() {
-        return Ok(path.to_path_buf());
+        return Ok(WorkflowSource::File(path.to_path_buf()));
     }
 
     // Add .toml extension if not present
@@ -1802,43 +1826,101 @@ pub async fn find_workflow(name: &str) -> Result<PathBuf> {
         format!("{}.toml", name)
     };
 
+    // Strip .toml for embedded lookup
+    let workflow_name = name.trim_end_matches(".toml");
+
     // Check project-local .lok/workflows/
     let local_path = PathBuf::from(".lok/workflows").join(&filename);
     if tokio::fs::metadata(&local_path).await.is_ok() {
-        return Ok(local_path);
+        return Ok(WorkflowSource::File(local_path));
     }
 
     // Check global ~/.config/lok/workflows/
     if let Some(home) = dirs::home_dir() {
         let global_path = home.join(".config/lok/workflows").join(&filename);
         if tokio::fs::metadata(&global_path).await.is_ok() {
-            return Ok(global_path);
+            return Ok(WorkflowSource::File(global_path));
         }
     }
 
+    // Check embedded workflows (built into the binary)
+    if let Some(content) = crate::workflows::EMBEDDED.get(workflow_name) {
+        return Ok(WorkflowSource::Embedded {
+            name: workflow_name.to_string(),
+            content,
+        });
+    }
+
     anyhow::bail!(
-        "Workflow '{}' not found. Searched:\n  - .lok/workflows/{}\n  - ~/.config/lok/workflows/{}",
+        "Workflow '{}' not found. Searched:\n  - .lok/workflows/{}\n  - ~/.config/lok/workflows/{}\n  - embedded workflows",
         name,
         filename,
         filename
     )
 }
 
-/// List all available workflows
-pub async fn list_workflows() -> Result<Vec<(PathBuf, Workflow)>> {
-    let mut workflows = Vec::new();
+/// Information about a listed workflow
+pub struct ListedWorkflow {
+    pub name: String,
+    pub description: Option<String>,
+    pub source: WorkflowListSource,
+}
 
-    // Check project-local
+/// Where a listed workflow comes from
+pub enum WorkflowListSource {
+    /// Project-local .lok/workflows/
+    Local,
+    /// User's ~/.config/lok/workflows/
+    Global,
+    /// Built into the lok binary
+    Embedded,
+}
+
+/// List all available workflows (file-based and embedded)
+pub async fn list_workflows() -> Result<Vec<ListedWorkflow>> {
+    let mut workflows = Vec::new();
+    let mut seen_names = std::collections::HashSet::new();
+
+    // Check project-local (highest priority)
     let local_dir = PathBuf::from(".lok/workflows");
     if tokio::fs::metadata(&local_dir).await.is_ok() {
-        workflows.extend(load_workflows_from_dir(&local_dir).await?);
+        for (_path, wf) in load_workflows_from_dir(&local_dir).await? {
+            seen_names.insert(wf.name.clone());
+            workflows.push(ListedWorkflow {
+                name: wf.name,
+                description: wf.description,
+                source: WorkflowListSource::Local,
+            });
+        }
     }
 
-    // Check global
+    // Check global (medium priority)
     if let Some(home) = dirs::home_dir() {
         let global_dir = home.join(".config/lok/workflows");
         if tokio::fs::metadata(&global_dir).await.is_ok() {
-            workflows.extend(load_workflows_from_dir(&global_dir).await?);
+            for (_path, wf) in load_workflows_from_dir(&global_dir).await? {
+                if !seen_names.contains(&wf.name) {
+                    seen_names.insert(wf.name.clone());
+                    workflows.push(ListedWorkflow {
+                        name: wf.name,
+                        description: wf.description,
+                        source: WorkflowListSource::Global,
+                    });
+                }
+            }
+        }
+    }
+
+    // Add embedded workflows (lowest priority, only if not overridden)
+    for name in crate::workflows::EMBEDDED.list() {
+        if !seen_names.contains(name) {
+            if let Some(Ok(wf)) = crate::workflows::EMBEDDED.parse(name) {
+                workflows.push(ListedWorkflow {
+                    name: wf.name,
+                    description: wf.description,
+                    source: WorkflowListSource::Embedded,
+                });
+            }
         }
     }
 
@@ -1952,18 +2034,60 @@ async fn load_workflow_with_depth(path: &Path, depth: usize) -> Result<Workflow>
 
     // Handle extends inheritance
     if let Some(ref parent_name) = workflow.extends {
-        let parent_path = find_workflow(parent_name).await.with_context(|| {
+        let parent_source = find_workflow(parent_name).await.with_context(|| {
             format!(
                 "Failed to find parent workflow '{}' for extends",
                 parent_name
             )
         })?;
 
-        let parent = Box::pin(load_workflow_with_depth(&parent_path, depth + 1)).await?;
+        let parent = Box::pin(load_workflow_from_source_with_depth(
+            parent_source,
+            depth + 1,
+        ))
+        .await?;
         workflow = merge_workflows(parent, workflow);
     }
 
     Ok(workflow)
+}
+
+/// Load a workflow from its source with depth tracking for extends
+async fn load_workflow_from_source_with_depth(
+    source: WorkflowSource,
+    depth: usize,
+) -> Result<Workflow> {
+    if depth > 10 {
+        anyhow::bail!("Workflow inheritance depth exceeded (max 10) - possible circular extends");
+    }
+
+    match source {
+        WorkflowSource::File(path) => load_workflow_with_depth(&path, depth).await,
+        WorkflowSource::Embedded { name, content } => {
+            let mut workflow: Workflow = toml::from_str(content).map_err(|e| {
+                anyhow::anyhow!("Failed to parse embedded workflow '{}': {}", name, e)
+            })?;
+
+            // Handle extends inheritance for embedded workflows
+            if let Some(ref parent_name) = workflow.extends {
+                let parent_source = find_workflow(parent_name).await.with_context(|| {
+                    format!(
+                        "Failed to find parent workflow '{}' for extends in embedded workflow '{}'",
+                        parent_name, name
+                    )
+                })?;
+
+                let parent = Box::pin(load_workflow_from_source_with_depth(
+                    parent_source,
+                    depth + 1,
+                ))
+                .await?;
+                workflow = merge_workflows(parent, workflow);
+            }
+
+            Ok(workflow)
+        }
+    }
 }
 
 /// Merge parent workflow with child workflow
