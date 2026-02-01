@@ -1,0 +1,101 @@
+# Security audit with multiple backends
+#
+# Usage:
+#   lok run audit
+#   lok run audit src/
+#
+# Override this workflow by creating .lok/workflows/audit.toml
+
+name = "audit"
+description = "Security audit with multiple backends"
+
+[[steps]]
+name = "gather-code"
+shell = '''
+# Find security-relevant files (auth, input handling, crypto, etc.)
+echo "=== Security-Relevant Files ==="
+
+# Look for auth/security related files
+find . -type f \( -name "*.rs" -o -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.rb" -o -name "*.go" \) \
+    -not -path "*/node_modules/*" \
+    -not -path "*/target/*" \
+    -not -path "*/vendor/*" \
+    -not -path "*/.git/*" \
+    2>/dev/null | xargs grep -l -i -E "(auth|password|token|secret|key|crypt|hash|sanitize|escape|sql|exec|eval|shell)" 2>/dev/null | head -20
+
+echo ""
+echo "=== Potential Injection Points ==="
+# Look for user input handling
+find . -type f \( -name "*.rs" -o -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.rb" -o -name "*.go" \) \
+    -not -path "*/node_modules/*" \
+    -not -path "*/target/*" \
+    -not -path "*/vendor/*" \
+    2>/dev/null | xargs grep -l -E "(request\.|req\.|params\[|query\.|body\.|input)" 2>/dev/null | head -20
+'''
+
+[[steps]]
+name = "audit-injection"
+depends_on = ["gather-code"]
+prompt = """
+Perform a security audit focusing on INJECTION vulnerabilities.
+
+Check for:
+1. SQL Injection - unsanitized input in SQL queries
+2. Command Injection - user input in shell commands
+3. Path Traversal - user input in file paths
+4. XSS - unescaped output in HTML/templates
+5. Code Injection - eval/exec with user input
+
+Files to examine:
+{{ steps.gather-code.output }}
+
+For each vulnerability found, provide:
+- Severity (Critical/High/Medium/Low)
+- File and line number
+- Description of the issue
+- Recommended fix
+"""
+
+[[steps]]
+name = "audit-auth"
+depends_on = ["gather-code"]
+prompt = """
+Perform a security audit focusing on AUTHENTICATION and AUTHORIZATION.
+
+Check for:
+1. Hardcoded credentials or API keys
+2. Weak password handling (no hashing, weak algorithms)
+3. Missing authentication on sensitive endpoints
+4. Missing authorization checks (IDOR vulnerabilities)
+5. Session management issues
+6. Insecure token generation
+
+Files to examine:
+{{ steps.gather-code.output }}
+
+For each vulnerability found, provide:
+- Severity (Critical/High/Medium/Low)
+- File and line number
+- Description of the issue
+- Recommended fix
+"""
+
+[[steps]]
+name = "synthesize"
+backend = "claude"
+depends_on = ["audit-injection", "audit-auth"]
+prompt = """
+Synthesize the security audit findings into a prioritized report.
+
+INJECTION AUDIT:
+{{ steps.audit-injection.output }}
+
+AUTH AUDIT:
+{{ steps.audit-auth.output }}
+
+Create a summary with:
+1. Critical issues (fix immediately)
+2. High priority issues (fix soon)
+3. Medium/Low issues (fix when possible)
+4. Overall security posture assessment
+"""

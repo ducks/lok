@@ -1,0 +1,42 @@
+# Review git diff with multiple backends
+#
+# Usage:
+#   lok run diff                    # Review staged changes
+#   lok run diff main..HEAD         # Review branch vs main
+#   lok run diff --unstaged         # Review all uncommitted changes
+#
+# Override this workflow by creating .lok/workflows/diff.toml
+
+name = "diff"
+description = "Review git changes with multiple backends"
+
+[[steps]]
+name = "get-diff"
+shell = """
+if [ -n "{{ arg.1 }}" ]; then
+    git diff {{ arg.1 }}
+elif [ "{{ arg.unstaged }}" = "true" ]; then
+    git diff
+else
+    git diff --cached
+fi
+"""
+
+[[steps]]
+name = "review"
+depends_on = ["get-diff"]
+prompt = """
+Review the following git diff. Look for:
+- Bugs or logic errors
+- Security issues
+- Performance problems
+- Code style issues
+- Missing error handling
+- Suggestions for improvement
+
+Be concise and specific. Reference line numbers when possible.
+
+```diff
+{{ steps.get-diff.output }}
+```
+"""

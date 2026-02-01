@@ -139,13 +139,43 @@ depends_on = ["deep-dive"]
 shell = "gh issue comment 123 --body '{{ steps.deep-dive.output }}'"
 ```
 
+### Workflow Resolution
+
+Lok searches for workflows in this order (first match wins):
+
+1. **Project**: `.lok/workflows/{name}.toml`
+2. **User**: `~/.config/lok/workflows/{name}.toml`
+3. **Embedded**: Built into the lok binary
+
+This means you can override any built-in workflow by creating your own version
+at the project or user level.
+
 ### Built-in Workflows
+
+Lok ships with these workflows embedded in the binary:
 
 | Workflow | Description |
 |----------|-------------|
-| `fix` | Analyze issue with multiple backends, post proposal |
-| `review-pr` | Multi-backend PR review with consensus verdict |
-| `full-heal` | Autonomous: hunt bugs, fix, PR, review, merge |
+| `diff` | Review git changes with multiple backends |
+| `explain` | Explain codebase structure and architecture |
+| `audit` | Security audit with multiple backends |
+| `hunt` | Bug hunt with multiple backends |
+
+Run `lok workflow list` to see all available workflows. Built-in workflows show
+as "(built-in)", which you can override by creating your own version:
+
+```bash
+lok workflow list              # Shows: diff (built-in)
+# Create override:
+mkdir -p .lok/workflows
+lok run diff > /dev/null       # See what it does, then customize:
+cat > .lok/workflows/diff.toml << 'EOF'
+name = "diff"
+description = "My custom diff review"
+# ... your custom steps
+EOF
+lok workflow list              # Now shows: diff (local)
+```
 
 ### Consensus and Error Handling
 

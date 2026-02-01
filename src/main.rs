@@ -11,6 +11,7 @@ mod tasks;
 mod team;
 mod utils;
 mod workflow;
+mod workflows;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -843,8 +844,8 @@ async fn run_workflow(
     args: Vec<String>,
     config: &config::Config,
 ) -> Result<()> {
-    let path = workflow::find_workflow(name).await?;
-    let wf = workflow::load_workflow(&path).await?;
+    let source = workflow::find_workflow(name).await?;
+    let wf = workflow::load_workflow_from_source(source).await?;
 
     let cwd = crate::utils::canonicalize_async(dir).await;
     let runner = workflow::WorkflowRunner::new(config.clone(), cwd, args);
@@ -884,18 +885,17 @@ async fn list_workflows() -> Result<()> {
     println!("{}", "Available workflows:".bold());
     println!();
 
-    for (path, wf) in workflows {
-        let location = if path.starts_with(".lok") {
-            "(local)".dimmed()
-        } else {
-            "(global)".dimmed()
+    for wf in workflows {
+        let location = match &wf.source {
+            workflow::WorkflowListSource::Local => "(local)".dimmed(),
+            workflow::WorkflowListSource::Global => "(global)".dimmed(),
+            workflow::WorkflowListSource::Embedded => "(built-in)".dimmed(),
         };
 
         println!("  {} {}", wf.name.cyan(), location);
         if let Some(desc) = &wf.description {
             println!("    {}", desc.dimmed());
         }
-        println!("    {} steps", wf.steps.len());
         println!();
     }
 

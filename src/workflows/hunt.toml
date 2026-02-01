@@ -1,0 +1,84 @@
+# Bug hunt with multiple backends
+#
+# Usage:
+#   lok run hunt
+#   lok run hunt --issues    # Create GitHub issues for findings
+#
+# Override this workflow by creating .lok/workflows/hunt.toml
+
+name = "hunt"
+description = "Bug hunt with multiple backends"
+
+[[steps]]
+name = "hunt-errors"
+prompt = """
+Hunt for error handling bugs in this codebase. Look for:
+
+1. Uncaught exceptions or panics
+2. Missing error checks (Result/Option not handled)
+3. Silent failures (errors logged but not propagated)
+4. Resource leaks (files/connections not closed on error)
+5. Inconsistent error types or messages
+
+Be specific: include file paths and line numbers.
+Format findings as a list with severity (Critical/High/Medium/Low).
+"""
+
+[[steps]]
+name = "hunt-perf"
+prompt = """
+Hunt for performance issues in this codebase. Look for:
+
+1. N+1 query patterns
+2. Unnecessary allocations in hot paths
+3. Missing caching opportunities
+4. Blocking I/O in async contexts
+5. Quadratic or worse algorithmic complexity
+
+Be specific: include file paths and line numbers.
+Format findings as a list with severity (Critical/High/Medium/Low).
+"""
+
+[[steps]]
+name = "hunt-dead-code"
+prompt = """
+Hunt for dead code and technical debt in this codebase. Look for:
+
+1. Unused functions, types, or modules
+2. Commented-out code blocks
+3. TODO/FIXME/HACK comments that should be addressed
+4. Deprecated APIs still in use
+5. Duplicate or redundant code
+
+Be specific: include file paths and line numbers.
+Format findings as a list with priority (High/Medium/Low).
+"""
+
+[[steps]]
+name = "synthesize"
+backend = "claude"
+depends_on = ["hunt-errors", "hunt-perf", "hunt-dead-code"]
+prompt = """
+Synthesize the bug hunt findings into a prioritized report.
+
+ERROR HANDLING:
+{{ steps.hunt-errors.output }}
+
+PERFORMANCE:
+{{ steps.hunt-perf.output }}
+
+DEAD CODE / TECH DEBT:
+{{ steps.hunt-dead-code.output }}
+
+Create a prioritized list of issues to fix, grouped by:
+1. Critical bugs (fix immediately)
+2. High priority (fix soon)
+3. Medium priority (fix when convenient)
+4. Low priority / nice to have
+
+Output as JSON array for issue creation:
+[
+  {"title": "Short title", "body": "Detailed description with file paths", "labels": ["bug"], "priority": "critical"},
+  ...
+]
+"""
