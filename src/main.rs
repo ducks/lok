@@ -538,11 +538,10 @@ async fn main() -> Result<()> {
                 agents
                     .iter()
                     .filter_map(|a| {
-                        let parts: Vec<&str> = a.splitn(2, ':').collect();
-                        if parts.len() == 2 {
+                        if let Some((name, desc)) = a.split_once(':') {
                             Some(spawn::AgentTask {
-                                name: parts[0].trim().to_string(),
-                                description: parts[1].trim().to_string(),
+                                name: name.trim().to_string(),
+                                description: desc.trim().to_string(),
                                 backend: None,
                             })
                         } else {
@@ -1465,11 +1464,8 @@ fn parse_pr_identifier(pr: &str, repo: Option<&str>) -> Result<(String, String)>
     }
 
     // Handle "owner/repo#123" format
-    if pr.contains('#') {
-        let parts: Vec<&str> = pr.splitn(2, '#').collect();
-        if parts.len() == 2 {
-            return Ok((parts[0].to_string(), parts[1].to_string()));
-        }
+    if let Some((repo_part, pr_num)) = pr.split_once('#') {
+        return Ok((repo_part.to_string(), pr_num.to_string()));
     }
 
     // If repo is provided, use it

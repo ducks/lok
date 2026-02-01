@@ -72,7 +72,14 @@ pub async fn run(
     println!();
     if let Some(ref body) = issue.body {
         let preview = if body.len() > 500 {
-            format!("{}...", &body[..500])
+            // Truncate at UTF-8 char boundary (~500 bytes)
+            let truncate_at = body
+                .char_indices()
+                .take_while(|(i, _)| *i <= 500)
+                .last()
+                .map(|(i, c)| i + c.len_utf8())
+                .unwrap_or(body.len().min(500));
+            format!("{}...", &body[..truncate_at])
         } else {
             body.clone()
         };
