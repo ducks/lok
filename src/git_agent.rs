@@ -368,99 +368,49 @@ pub async fn init_worktree(cwd: &Path) -> Result<()> {
         .output()
         .await?;
 
-    if !branch_check.status.success() {
-        // Create orphan branch
-        println!("  Creating orphan branch '{}'...", AGENT_BRANCH);
-
-        // Save current branch
-        let current_branch = Command::new("git")
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .current_dir(cwd)
-            .output()
-            .await?;
-        let current_branch = String::from_utf8_lossy(&current_branch.stdout)
-            .trim()
-            .to_string();
-
-        // Create orphan branch with initial commit
-        let checkout = Command::new("git")
-            .args(["checkout", "--orphan", AGENT_BRANCH])
-            .current_dir(cwd)
-            .output()
-            .await?;
-
-        if !checkout.status.success() {
-            return Err(anyhow!(
-                "Failed to create orphan branch: {}",
-                String::from_utf8_lossy(&checkout.stderr)
-            ));
-        }
-
-        // Remove all files from index (orphan branch starts with staged files)
-        let _ = Command::new("git")
-            .args(["rm", "-rf", "--cached", "."])
-            .current_dir(cwd)
-            .output()
-            .await;
-
-        // Create initial commit
-        let commit = Command::new("git")
-            .args(["commit", "--allow-empty", "-m", "Initialize agent history"])
-            .current_dir(cwd)
-            .output()
-            .await?;
-
-        if !commit.status.success() {
-            // Try to recover by going back to original branch
-            let _ = Command::new("git")
-                .args(["checkout", &current_branch])
-                .current_dir(cwd)
-                .output()
-                .await;
-            return Err(anyhow!(
-                "Failed to create initial commit: {}",
-                String::from_utf8_lossy(&commit.stderr)
-            ));
-        }
-
-        // Switch back to original branch
-        let switch_back = Command::new("git")
-            .args(["checkout", &current_branch])
-            .current_dir(cwd)
-            .output()
-            .await?;
-
-        if !switch_back.status.success() {
-            return Err(anyhow!(
-                "Failed to switch back to {}: {}",
-                current_branch,
-                String::from_utf8_lossy(&switch_back.stderr)
-            ));
-        }
-
-        println!("  {} Created orphan branch '{}'", "✓".green(), AGENT_BRANCH);
-    } else {
+    if branch_check.status.success() {
+        // Branch exists, just add the worktree
         println!(
             "  {} Orphan branch '{}' already exists",
             "✓".green(),
             AGENT_BRANCH
         );
-    }
+        println!("  Adding worktree at '{}'...", AGENT_DIR);
 
-    // Add worktree
-    println!("  Adding worktree at '{}'...", AGENT_DIR);
+        let worktree = Command::new("git")
+            .args(["worktree", "add", AGENT_DIR, AGENT_BRANCH])
+            .current_dir(cwd)
+            .output()
+            .await?;
 
-    let worktree = Command::new("git")
-        .args(["worktree", "add", AGENT_DIR, AGENT_BRANCH])
-        .current_dir(cwd)
-        .output()
-        .await?;
+        if !worktree.status.success() {
+            return Err(anyhow!(
+                "Failed to add worktree: {}",
+                String::from_utf8_lossy(&worktree.stderr)
+            ));
+        }
+    } else {
+        // Create orphan branch AND worktree in one step using git worktree add --orphan
+        // This avoids needing to switch branches at all (Git 2.41+)
+        println!(
+            "  Creating orphan branch '{}' with worktree...",
+            AGENT_BRANCH
+        );
 
-    if !worktree.status.success() {
-        return Err(anyhow!(
-            "Failed to add worktree: {}",
-            String::from_utf8_lossy(&worktree.stderr)
-        ));
+        let worktree = Command::new("git")
+            .args(["worktree", "add", "--orphan", "-b", AGENT_BRANCH, AGENT_DIR])
+            .current_dir(cwd)
+            .output()
+            .await?;
+
+        if !worktree.status.success() {
+            return Err(anyhow!(
+                "Failed to create orphan worktree: {}",
+                String::from_utf8_lossy(&worktree.stderr)
+            ));
+        }
+
+        println!("  {} Created orphan branch '{}'", "✓".green(), AGENT_BRANCH);
     }
 
     println!("  {} Added worktree at '{}'", "✓".green(), AGENT_DIR);
