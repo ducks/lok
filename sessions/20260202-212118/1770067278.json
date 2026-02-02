@@ -1,0 +1,8 @@
+{
+  "what": "Workflow: pick-and-fix",
+  "why": "Pick the best open issue and fix it with multi-backend consensus",
+  "how": "Steps:\n  ✓ setup (shell)\n  ✓ list (shell)\n  ✓ open_prs (shell)\n  ✓ pick (claude)\n  ✓ fetch (shell)\n  ✓ propose_claude (claude)\n  ✓ propose_gemini (gemini)\n  ✓ propose_codex (codex)\n  ✓ debate (claude)\n  ✓ fix (claude)\n  ✓ branch (shell)\n  ✓ commit (shell)\n  ✓ push (shell)\n  ✓ pr (shell)",
+  "timestamp": "2026-02-02T21:21:18.009063672Z",
+  "code_commit": "4f230da5f80a419eb356be188af0611000075e2e",
+  "outcome": "success"
+}
