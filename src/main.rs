@@ -121,6 +121,21 @@ enum Commands {
         agent: bool,
     },
 
+    /// Generate a report from agent history
+    Report {
+        /// Working directory (must have .agent/ worktree)
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+
+        /// Limit to last N checkpoints
+        #[arg(short, long)]
+        limit: Option<usize>,
+
+        /// Output as JSON instead of markdown
+        #[arg(long)]
+        json: bool,
+    },
+
     /// List available backends
     Backends,
 
@@ -382,6 +397,9 @@ async fn main() -> Result<()> {
             if agent {
                 git_agent::init_worktree(Path::new(".")).await?;
             }
+        }
+        Commands::Report { dir, limit, json } => {
+            run_report(&dir, limit, json).await?;
         }
         Commands::Backends => {
             backend::list_backends(&config)?;
@@ -873,6 +891,161 @@ async fn run_workflow(
         );
     } else {
         workflow::print_results(&results);
+    }
+
+    Ok(())
+}
+
+async fn run_report(dir: &Path, limit: Option<usize>, json_output: bool) -> Result<()> {
+    use std::fs;
+
+    let agent_dir = dir.join(".agent");
+    if !agent_dir.exists() {
+        anyhow::bail!(
+            "No agent history found. Run 'lok init --agent' to initialize agent tracking."
+        );
+    }
+
+    let sessions_dir = agent_dir.join("sessions");
+    if !sessions_dir.exists() {
+        println!("{}", "No agent sessions found.".yellow());
+        return Ok(());
+    }
+
+    // Collect all events from all sessions
+    let mut events: Vec<git_agent::AgentEvent> = Vec::new();
+
+    for session_entry in fs::read_dir(&sessions_dir)? {
+        let session_entry = session_entry?;
+        if !session_entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        for event_file in fs::read_dir(session_entry.path())? {
+            let event_file = event_file?;
+            let path = event_file.path();
+            if path.extension().map(|e| e == "json").unwrap_or(false) {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if let Ok(event) = serde_json::from_str::<git_agent::AgentEvent>(&content) {
+                        events.push(event);
+                    }
+                }
+            }
+        }
+    }
+
+    if events.is_empty() {
+        println!("{}", "No agent events found.".yellow());
+        return Ok(());
+    }
+
+    // Sort by timestamp (newest first)
+    events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+    // Apply limit
+    if let Some(n) = limit {
+        events.truncate(n);
+    }
+
+    if json_output {
+        // JSON output
+        let json = serde_json::to_string_pretty(&events)?;
+        println!("{}", json);
+    } else {
+        // Markdown output
+        println!("{}", "# Agent Activity Report".bold());
+        println!();
+        println!("{} {} checkpoint(s)", "Total:".dimmed(), events.len());
+        println!();
+
+        for event in &events {
+            // Header with timestamp
+            let timestamp = event.timestamp.format("%Y-%m-%d %H:%M:%S UTC");
+            println!("## {}", event.what);
+            println!();
+            println!("{} {}", "Time:".dimmed(), timestamp);
+
+            // Why
+            println!();
+            println!("**Why:** {}", event.why);
+
+            // How (if present)
+            if let Some(ref how) = event.how {
+                println!();
+                println!("**How:**");
+                for line in how.lines() {
+                    println!("{}", line);
+                }
+            }
+
+            // Backup (if present)
+            if let Some(ref backup) = event.backup {
+                println!();
+                println!("**Backup plan:** {}", backup);
+            }
+
+            // Outcome
+            if let Some(ref outcome) = event.outcome {
+                println!();
+                match outcome {
+                    git_agent::EventOutcome::Success => {
+                        println!("**Outcome:** {} Success", "✓".green());
+                    }
+                    git_agent::EventOutcome::Failure { reason } => {
+                        println!("**Outcome:** {} Failed - {}", "✗".red(), reason);
+                    }
+                    git_agent::EventOutcome::Partial { details } => {
+                        println!("**Outcome:** {} Partial - {}", "⚠".yellow(), details);
+                    }
+                }
+            }
+
+            // Code commit link
+            if let Some(ref sha) = event.code_commit {
+                println!();
+                println!("**Code commit:** `{}`", &sha[..8.min(sha.len())]);
+            }
+
+            println!();
+            println!("{}", "---".dimmed());
+            println!();
+        }
+
+        // Summary for PR description
+        println!("{}", "## Summary for PR".bold());
+        println!();
+        let successful = events
+            .iter()
+            .filter(|e| matches!(e.outcome, Some(git_agent::EventOutcome::Success)))
+            .count();
+        let failed = events
+            .iter()
+            .filter(|e| matches!(e.outcome, Some(git_agent::EventOutcome::Failure { .. })))
+            .count();
+
+        println!("- {} checkpoint(s) total", events.len());
+        if successful > 0 {
+            println!("- {} successful", successful);
+        }
+        if failed > 0 {
+            println!("- {} failed", failed);
+        }
+
+        // List main actions
+        println!();
+        println!("### Actions taken:");
+        for event in events.iter().take(10) {
+            let status = match &event.outcome {
+                Some(git_agent::EventOutcome::Success) => "✓",
+                Some(git_agent::EventOutcome::Failure { .. }) => "✗",
+                Some(git_agent::EventOutcome::Partial { .. }) => "⚠",
+                None => "•",
+            };
+            println!("- {} {}", status, event.what);
+        }
+        if events.len() > 10 {
+            println!("- ... and {} more", events.len() - 10);
+        }
     }
 
     Ok(())
