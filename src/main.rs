@@ -401,7 +401,12 @@ async fn main() -> Result<()> {
             tasks::audit::run(&config, &dir).await?;
         }
         Commands::Init { agent } => {
-            config::init_config()?;
+            // Only create lok.toml if it doesn't exist
+            if !Path::new("lok.toml").exists() {
+                config::init_config()?;
+            } else {
+                println!("{} lok.toml already exists", "✓".green());
+            }
             if agent {
                 git_agent::init_worktree(Path::new(".")).await?;
             }
