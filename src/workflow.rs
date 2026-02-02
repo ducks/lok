@@ -1142,6 +1142,19 @@ impl WorkflowRunner {
             // Get current code commit for linking
             let code_commit = git_agent::get_code_head(&self.cwd).await.ok();
 
+            // Extract reasoning from debate/synthesis steps
+            let reasoning_steps = ["debate", "synthesize", "fix", "propose"];
+            let reasoning: Option<String> = ordered_results
+                .iter()
+                .filter(|r| {
+                    r.success
+                        && reasoning_steps
+                            .iter()
+                            .any(|s| r.name.contains(s) || r.name == *s)
+                })
+                .map(|r| format!("### {}\n\n{}", r.name, r.output))
+                .reduce(|acc, s| format!("{}\n\n{}", acc, s));
+
             let mut event = git_agent::AgentEvent::new(
                 format!("Workflow: {}", workflow.name),
                 workflow
@@ -1150,6 +1163,10 @@ impl WorkflowRunner {
                     .unwrap_or_else(|| "Workflow execution".to_string()),
             )
             .with_how(format!("Steps:\n{}", step_summary.join("\n")));
+
+            if let Some(reasoning) = reasoning {
+                event = event.with_reasoning(reasoning);
+            }
 
             if let Some(sha) = code_commit {
                 event = event.with_code_commit(sha);

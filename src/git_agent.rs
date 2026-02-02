@@ -57,6 +57,11 @@ pub struct AgentEvent {
     /// Outcome of the action (set after execution)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outcome: Option<EventOutcome>,
+
+    /// Agent reasoning - why this approach was chosen
+    /// Captured from debate/synthesis steps
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
 }
 
 /// Outcome of an agent event
@@ -82,6 +87,7 @@ impl AgentEvent {
             code_commit: None,
             session_id: None,
             outcome: None,
+            reasoning: None,
         }
     }
 
@@ -106,6 +112,12 @@ impl AgentEvent {
     /// Set session ID
     pub fn with_session(mut self, session_id: impl Into<String>) -> Self {
         self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// Add agent reasoning (from debate/synthesis steps)
+    pub fn with_reasoning(mut self, reasoning: impl Into<String>) -> Self {
+        self.reasoning = Some(reasoning.into());
         self
     }
 

@@ -1157,6 +1157,12 @@ fn format_report(events: &[git_agent::AgentEvent], json_output: bool) -> String 
             report.push_str(&format!("**Commit:** `{}`\n\n", &sha[..8.min(sha.len())]));
         }
 
+        if let Some(ref reasoning) = event.reasoning {
+            report.push_str("<details>\n<summary>Agent Reasoning</summary>\n\n");
+            report.push_str(reasoning);
+            report.push_str("\n\n</details>\n\n");
+        }
+
         report.push_str("---\n\n");
     }
 
