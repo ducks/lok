@@ -1,0 +1,12 @@
+{
+  "what": "Workflow: explain",
+  "why": "Explain codebase structure and architecture",
+  "how": "Steps:\n  ✓ gather-structure (shell)\n  ✓ gather-readme (shell)\n  ✓ gather-manifests (shell)\n  ✗ explain ()",
+  "timestamp": "2026-02-02T21:14:11.351373557Z",
+  "code_commit": "cc77b8e2541c45ef821e14aa50baef7ce5095ec5",
+  "outcome": {
+    "failure": {
+      "reason": "3/4 steps succeeded"
+    }
+  }
+}
