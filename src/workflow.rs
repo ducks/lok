@@ -1139,7 +1139,10 @@ impl WorkflowRunner {
                 })
                 .collect();
 
-            let event = git_agent::AgentEvent::new(
+            // Get current code commit for linking
+            let code_commit = git_agent::get_code_head(&self.cwd).await.ok();
+
+            let mut event = git_agent::AgentEvent::new(
                 format!("Workflow: {}", workflow.name),
                 workflow
                     .description
@@ -1147,6 +1150,10 @@ impl WorkflowRunner {
                     .unwrap_or_else(|| "Workflow execution".to_string()),
             )
             .with_how(format!("Steps:\n{}", step_summary.join("\n")));
+
+            if let Some(sha) = code_commit {
+                event = event.with_code_commit(sha);
+            }
 
             let event = if all_success {
                 event.success()

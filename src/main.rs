@@ -131,6 +131,14 @@ enum Commands {
         #[arg(short, long)]
         limit: Option<usize>,
 
+        /// Only show checkpoints since this ref (e.g., main, HEAD~5, abc123)
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Post report as comment on this PR number
+        #[arg(long)]
+        pr: Option<u64>,
+
         /// Output as JSON instead of markdown
         #[arg(long)]
         json: bool,
@@ -398,8 +406,14 @@ async fn main() -> Result<()> {
                 git_agent::init_worktree(Path::new(".")).await?;
             }
         }
-        Commands::Report { dir, limit, json } => {
-            run_report(&dir, limit, json).await?;
+        Commands::Report {
+            dir,
+            limit,
+            since,
+            pr,
+            json,
+        } => {
+            run_report(&dir, limit, since.as_deref(), pr, json).await?;
         }
         Commands::Backends => {
             backend::list_backends(&config)?;
@@ -896,8 +910,16 @@ async fn run_workflow(
     Ok(())
 }
 
-async fn run_report(dir: &Path, limit: Option<usize>, json_output: bool) -> Result<()> {
+async fn run_report(
+    dir: &Path,
+    limit: Option<usize>,
+    since: Option<&str>,
+    pr: Option<u64>,
+    json_output: bool,
+) -> Result<()> {
+    use std::collections::HashSet;
     use std::fs;
+    use std::process::Command;
 
     let agent_dir = dir.join(".agent");
     if !agent_dir.exists() {
@@ -911,6 +933,63 @@ async fn run_report(dir: &Path, limit: Option<usize>, json_output: bool) -> Resu
         println!("{}", "No agent sessions found.".yellow());
         return Ok(());
     }
+
+    // If --pr is specified, get the base branch to filter commits
+    let since_ref = if let Some(pr_num) = pr {
+        // Get PR base branch via gh
+        let output = Command::new("gh")
+            .args(["pr", "view", &pr_num.to_string(), "--json", "baseRefName"])
+            .current_dir(dir)
+            .output()
+            .context("Failed to run gh. Is gh CLI installed?")?;
+
+        if !output.status.success() {
+            anyhow::bail!(
+                "Failed to get PR info: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        let pr_info: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let base = pr_info["baseRefName"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine PR base branch"))?;
+
+        println!(
+            "{} Filtering to PR #{} (base: {})",
+            "→".cyan(),
+            pr_num,
+            base
+        );
+        Some(base.to_string())
+    } else {
+        since.map(|s| s.to_string())
+    };
+
+    // Get commits in range if --since or --pr specified
+    let commits_in_range: Option<HashSet<String>> = if let Some(ref base) = since_ref {
+        let output = Command::new("git")
+            .args(["log", "--format=%H", &format!("{}..HEAD", base)])
+            .current_dir(dir)
+            .output()
+            .context("Failed to run git log")?;
+
+        if !output.status.success() {
+            anyhow::bail!(
+                "Failed to get commit range: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        let commits: HashSet<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|s| s.to_string())
+            .collect();
+
+        Some(commits)
+    } else {
+        None
+    };
 
     // Collect all events from all sessions
     let mut events: Vec<git_agent::AgentEvent> = Vec::new();
@@ -927,7 +1006,17 @@ async fn run_report(dir: &Path, limit: Option<usize>, json_output: bool) -> Resu
             if path.extension().map(|e| e == "json").unwrap_or(false) {
                 if let Ok(content) = fs::read_to_string(&path) {
                     if let Ok(event) = serde_json::from_str::<git_agent::AgentEvent>(&content) {
-                        events.push(event);
+                        // Filter by commit range if specified
+                        if let Some(ref commits) = commits_in_range {
+                            if let Some(ref code_commit) = event.code_commit {
+                                if commits.contains(code_commit) {
+                                    events.push(event);
+                                }
+                            }
+                            // Skip events without code_commit when filtering
+                        } else {
+                            events.push(event);
+                        }
                     }
                 }
             }
@@ -935,120 +1024,142 @@ async fn run_report(dir: &Path, limit: Option<usize>, json_output: bool) -> Resu
     }
 
     if events.is_empty() {
-        println!("{}", "No agent events found.".yellow());
+        if since_ref.is_some() {
+            println!(
+                "{}",
+                "No agent events found in the specified range.".yellow()
+            );
+        } else {
+            println!("{}", "No agent events found.".yellow());
+        }
         return Ok(());
     }
 
-    // Sort by timestamp (newest first)
-    events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    // Sort by timestamp (oldest first for chronological order in reports)
+    events.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
 
-    // Apply limit
+    // Apply limit (from the end, so we get most recent)
     if let Some(n) = limit {
-        events.truncate(n);
+        if events.len() > n {
+            events = events.split_off(events.len() - n);
+        }
     }
 
-    if json_output {
-        // JSON output
-        let json = serde_json::to_string_pretty(&events)?;
-        println!("{}", json);
+    // Generate report
+    let report = format_report(&events, json_output);
+
+    // If --pr, post as comment
+    if let Some(pr_num) = pr {
+        if json_output {
+            // Just print JSON, don't post
+            println!("{}", report);
+        } else {
+            println!("{}", "Posting report to PR...".cyan());
+
+            let output = Command::new("gh")
+                .args(["pr", "comment", &pr_num.to_string(), "--body", &report])
+                .current_dir(dir)
+                .output()
+                .context("Failed to run gh pr comment")?;
+
+            if !output.status.success() {
+                anyhow::bail!(
+                    "Failed to post comment: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+
+            println!("{} Report posted to PR #{}", "✓".green(), pr_num);
+        }
     } else {
-        // Markdown output
-        println!("{}", "# Agent Activity Report".bold());
-        println!();
-        println!("{} {} checkpoint(s)", "Total:".dimmed(), events.len());
-        println!();
-
-        for event in &events {
-            // Header with timestamp
-            let timestamp = event.timestamp.format("%Y-%m-%d %H:%M:%S UTC");
-            println!("## {}", event.what);
-            println!();
-            println!("{} {}", "Time:".dimmed(), timestamp);
-
-            // Why
-            println!();
-            println!("**Why:** {}", event.why);
-
-            // How (if present)
-            if let Some(ref how) = event.how {
-                println!();
-                println!("**How:**");
-                for line in how.lines() {
-                    println!("{}", line);
-                }
-            }
-
-            // Backup (if present)
-            if let Some(ref backup) = event.backup {
-                println!();
-                println!("**Backup plan:** {}", backup);
-            }
-
-            // Outcome
-            if let Some(ref outcome) = event.outcome {
-                println!();
-                match outcome {
-                    git_agent::EventOutcome::Success => {
-                        println!("**Outcome:** {} Success", "✓".green());
-                    }
-                    git_agent::EventOutcome::Failure { reason } => {
-                        println!("**Outcome:** {} Failed - {}", "✗".red(), reason);
-                    }
-                    git_agent::EventOutcome::Partial { details } => {
-                        println!("**Outcome:** {} Partial - {}", "⚠".yellow(), details);
-                    }
-                }
-            }
-
-            // Code commit link
-            if let Some(ref sha) = event.code_commit {
-                println!();
-                println!("**Code commit:** `{}`", &sha[..8.min(sha.len())]);
-            }
-
-            println!();
-            println!("{}", "---".dimmed());
-            println!();
-        }
-
-        // Summary for PR description
-        println!("{}", "## Summary for PR".bold());
-        println!();
-        let successful = events
-            .iter()
-            .filter(|e| matches!(e.outcome, Some(git_agent::EventOutcome::Success)))
-            .count();
-        let failed = events
-            .iter()
-            .filter(|e| matches!(e.outcome, Some(git_agent::EventOutcome::Failure { .. })))
-            .count();
-
-        println!("- {} checkpoint(s) total", events.len());
-        if successful > 0 {
-            println!("- {} successful", successful);
-        }
-        if failed > 0 {
-            println!("- {} failed", failed);
-        }
-
-        // List main actions
-        println!();
-        println!("### Actions taken:");
-        for event in events.iter().take(10) {
-            let status = match &event.outcome {
-                Some(git_agent::EventOutcome::Success) => "✓",
-                Some(git_agent::EventOutcome::Failure { .. }) => "✗",
-                Some(git_agent::EventOutcome::Partial { .. }) => "⚠",
-                None => "•",
-            };
-            println!("- {} {}", status, event.what);
-        }
-        if events.len() > 10 {
-            println!("- ... and {} more", events.len() - 10);
-        }
+        println!("{}", report);
     }
 
     Ok(())
+}
+
+fn format_report(events: &[git_agent::AgentEvent], json_output: bool) -> String {
+    if json_output {
+        return serde_json::to_string_pretty(&events).unwrap_or_else(|_| "[]".to_string());
+    }
+
+    let mut report = String::new();
+
+    report.push_str("## Agent Activity Report\n\n");
+    report.push_str(&format!("{} checkpoint(s)\n\n", events.len()));
+
+    // Summary section first (for PR readability)
+    let successful = events
+        .iter()
+        .filter(|e| matches!(e.outcome, Some(git_agent::EventOutcome::Success)))
+        .count();
+    let failed = events
+        .iter()
+        .filter(|e| matches!(e.outcome, Some(git_agent::EventOutcome::Failure { .. })))
+        .count();
+
+    report.push_str("### Summary\n\n");
+    if successful > 0 {
+        report.push_str(&format!("- {} successful\n", successful));
+    }
+    if failed > 0 {
+        report.push_str(&format!("- {} failed\n", failed));
+    }
+    report.push('\n');
+
+    report.push_str("### Actions\n\n");
+    for event in events.iter() {
+        let status = match &event.outcome {
+            Some(git_agent::EventOutcome::Success) => "✓",
+            Some(git_agent::EventOutcome::Failure { .. }) => "✗",
+            Some(git_agent::EventOutcome::Partial { .. }) => "⚠",
+            None => "•",
+        };
+        report.push_str(&format!("- {} {}\n", status, event.what));
+
+        // Add why as sub-item
+        report.push_str(&format!("  - {}\n", event.why));
+    }
+    report.push('\n');
+
+    // Details section (collapsible for long reports)
+    if events.len() > 3 {
+        report.push_str("<details>\n<summary>Details</summary>\n\n");
+    }
+
+    for event in events.iter() {
+        let timestamp = event.timestamp.format("%Y-%m-%d %H:%M:%S UTC");
+        report.push_str(&format!("#### {}\n\n", event.what));
+        report.push_str(&format!("**Time:** {}\n\n", timestamp));
+        report.push_str(&format!("**Why:** {}\n\n", event.why));
+
+        if let Some(ref how) = event.how {
+            report.push_str("**How:**\n```\n");
+            report.push_str(how);
+            report.push_str("\n```\n\n");
+        }
+
+        if let Some(ref outcome) = event.outcome {
+            let outcome_str = match outcome {
+                git_agent::EventOutcome::Success => "✓ Success".to_string(),
+                git_agent::EventOutcome::Failure { reason } => format!("✗ Failed: {}", reason),
+                git_agent::EventOutcome::Partial { details } => format!("⚠ Partial: {}", details),
+            };
+            report.push_str(&format!("**Outcome:** {}\n\n", outcome_str));
+        }
+
+        if let Some(ref sha) = event.code_commit {
+            report.push_str(&format!("**Commit:** `{}`\n\n", &sha[..8.min(sha.len())]));
+        }
+
+        report.push_str("---\n\n");
+    }
+
+    if events.len() > 3 {
+        report.push_str("</details>\n");
+    }
+
+    report
 }
 
 async fn list_workflows() -> Result<()> {
