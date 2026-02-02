@@ -115,7 +115,11 @@ enum Commands {
     },
 
     /// Initialize a new lok.toml config file
-    Init,
+    Init {
+        /// Also initialize git-agent with orphan branch + worktree
+        #[arg(long)]
+        agent: bool,
+    },
 
     /// List available backends
     Backends,
@@ -373,8 +377,11 @@ async fn main() -> Result<()> {
         Commands::Audit { dir } => {
             tasks::audit::run(&config, &dir).await?;
         }
-        Commands::Init => {
+        Commands::Init { agent } => {
             config::init_config()?;
+            if agent {
+                git_agent::init_worktree(Path::new(".")).await?;
+            }
         }
         Commands::Backends => {
             backend::list_backends(&config)?;
