@@ -312,16 +312,20 @@ pub struct WorkflowRunner {
     cwd: PathBuf,
     args: Vec<String>,
     context: CodebaseContext,
+    /// Whether agent history tracking is enabled (worktree exists)
+    agent_enabled: bool,
 }
 
 impl WorkflowRunner {
     pub fn new(config: Config, cwd: PathBuf, args: Vec<String>) -> Self {
         let context = CodebaseContext::detect(&cwd);
+        let agent_enabled = git_agent::has_agent_worktree(&cwd);
         Self {
             config,
             cwd,
             args,
             context,
+            agent_enabled,
         }
     }
 
@@ -1119,6 +1123,47 @@ impl WorkflowRunner {
 
         println!();
         println!("{}", "=".repeat(50).dimmed());
+
+        // Create agent checkpoint if enabled
+        if self.agent_enabled {
+            let successful = ordered_results.iter().filter(|r| r.success).count();
+            let total = ordered_results.len();
+            let all_success = successful == total;
+
+            let step_summary: Vec<String> = ordered_results
+                .iter()
+                .map(|r| {
+                    let status = if r.success { "✓" } else { "✗" };
+                    let backend = r.backend.as_deref().unwrap_or("shell");
+                    format!("  {} {} ({})", status, r.name, backend)
+                })
+                .collect();
+
+            let event = git_agent::AgentEvent::new(
+                format!("Workflow: {}", workflow.name),
+                workflow
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| "Workflow execution".to_string()),
+            )
+            .with_how(format!("Steps:\n{}", step_summary.join("\n")));
+
+            let event = if all_success {
+                event.success()
+            } else {
+                event.failure(format!("{}/{} steps succeeded", successful, total))
+            };
+
+            match git_agent::checkpoint_event(&self.cwd, &event).await {
+                Ok(sha) if sha != "no-change" => {
+                    println!("{} Agent checkpoint: {}", "✓".green().dimmed(), &sha[..8]);
+                }
+                Ok(_) => {} // no-change is fine
+                Err(e) => {
+                    println!("{} Agent checkpoint failed: {}", "⚠".yellow().dimmed(), e);
+                }
+            }
+        }
 
         Ok(ordered_results)
     }
