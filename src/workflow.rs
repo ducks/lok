@@ -51,6 +51,9 @@ pub enum WorkflowError {
         workflow: String,
         duplicates: Vec<String>,
     },
+
+    #[error("Workflow '{workflow}': step '{step}' has min_deps_success but no dependencies\n  hint: min_deps_success requires depends_on to be non-empty")]
+    InvalidMinDepsSuccess { workflow: String, step: String },
 }
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
@@ -1224,6 +1227,19 @@ impl WorkflowRunner {
                         workflow: workflow_name.to_string(),
                         step: step.name.clone(),
                         missing: dep.clone(),
+                    }
+                    .into());
+                }
+            }
+        }
+
+        // Validate min_deps_success requires non-empty depends_on
+        for step in steps {
+            if let Some(min_success) = step.min_deps_success {
+                if min_success > 0 && step.depends_on.is_empty() {
+                    return Err(WorkflowError::InvalidMinDepsSuccess {
+                        workflow: workflow_name.to_string(),
+                        step: step.name.clone(),
                     }
                     .into());
                 }
@@ -2498,6 +2514,45 @@ line2"}"#;
         assert!(
             err_msg.contains("fetch"),
             "Expected 'fetch' in error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_min_deps_success_without_depends_on_error() {
+        let steps = vec![Step {
+            name: "lonely".to_string(),
+            backend: String::new(),
+            prompt: String::new(),
+            depends_on: vec![], // Empty!
+            when: None,
+            shell: Some("echo test".to_string()),
+            apply_edits: false,
+            verify: None,
+            retries: 0,
+            retry_delay: 1000,
+            for_each: None,
+            output_format: None,
+            continue_on_error: false,
+            min_deps_success: Some(2), // Requires 2 deps but has none
+            timeout: None,
+        }];
+
+        let config = crate::config::Config::default();
+        let runner = WorkflowRunner::new(config, std::path::PathBuf::from("/tmp"), vec![]);
+        let result = runner.group_by_depth(&steps, "test-workflow");
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("min_deps_success"),
+            "Expected min_deps_success error, got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("no dependencies"),
+            "Expected 'no dependencies' in error, got: {}",
             err_msg
         );
     }

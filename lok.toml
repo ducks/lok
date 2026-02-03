@@ -1,0 +1,74 @@
+[defaults]
+parallel = true
+timeout = 300
+
+[conductor]
+max_rounds = 5
+max_tokens = 4096
+
+[cache]
+enabled = true
+ttl_hours = 24
+
+[backends.ollama]
+enabled = true
+command = "http://localhost:11434"
+args = []
+skip_lines = 0
+model = "llama3.2"
+
+[backends.gemini]
+enabled = true
+command = "npx"
+args = ["@google/gemini-cli"]
+skip_lines = 1
+timeout = 600
+
+[backends.codex]
+enabled = true
+command = "codex"
+args = [
+    "exec",
+    "--json",
+    "-s",
+    "read-only",
+]
+skip_lines = 0
+
+[backends.claude]
+enabled = true
+command = "claude"
+args = []
+skip_lines = 0
+
+[tasks.audit]
+description = "Security audit"
+backends = ["gemini"]
+
+[[tasks.audit.prompts]]
+name = "injection"
+prompt = "Search for injection vulnerabilities (SQL, command, code injection). Look for: unsanitized user input in queries/commands, string interpolation in SQL, shell command construction. List up to 5 specific issues with file:line. Be concise."
+
+[[tasks.audit.prompts]]
+name = "auth"
+prompt = "Search for authentication/authorization issues. Look for: missing auth checks, privilege escalation, insecure token handling, hardcoded credentials. List up to 5 specific issues with file:line. Be concise."
+
+[[tasks.audit.prompts]]
+name = "secrets"
+prompt = "Search for exposed secrets and sensitive data. Look for: hardcoded API keys, passwords in code, secrets in logs, sensitive data in error messages. List up to 5 specific issues with file:line. Be concise."
+
+[tasks.hunt]
+description = "Find bugs and code issues"
+backends = ["codex"]
+
+[[tasks.hunt.prompts]]
+name = "errors"
+prompt = "Find error handling problems in this codebase. Look for: unchecked errors, panics/crashes waiting to happen, missing input validation, swallowed exceptions. List up to 5 specific issues with file:line. Be concise."
+
+[[tasks.hunt.prompts]]
+name = "perf"
+prompt = "Find performance issues in this codebase. Look for: inefficient loops, unnecessary allocations, blocking calls in async code, O(n^2) patterns, missing caching opportunities. List up to 5 specific issues with file:line. Be concise."
+
+[[tasks.hunt.prompts]]
+name = "dead-code"
+prompt = "Find unused or dead code in this codebase. Look for: unreachable code, unused functions/methods, redundant conditions, commented-out code that should be removed. List up to 5 specific issues with file:line. Be concise."
