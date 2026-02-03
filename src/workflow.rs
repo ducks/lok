@@ -53,7 +53,15 @@ pub enum WorkflowError {
     },
 
     #[error("Workflow '{workflow}': step '{step}' has min_deps_success but no dependencies\n  hint: min_deps_success requires depends_on to be non-empty")]
-    InvalidMinDepsSuccess { workflow: String, step: String },
+    MinDepsSuccessWithoutDeps { workflow: String, step: String },
+
+    #[error("Workflow '{workflow}': step '{step}' has min_deps_success ({min_deps_success}) exceeding number of dependencies ({actual_deps})\n  hint: reduce min_deps_success or add more dependencies")]
+    MinDepsSuccessExceedsDeps {
+        workflow: String,
+        step: String,
+        min_deps_success: usize,
+        actual_deps: usize,
+    },
 }
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
@@ -174,6 +182,26 @@ pub struct Workflow {
     pub extends: Option<String>,
     #[serde(default)]
     pub steps: Vec<Step>,
+}
+
+impl Workflow {
+    /// Validate workflow configuration at load time
+    pub fn validate(&self) -> Result<(), WorkflowError> {
+        for step in &self.steps {
+            if let Some(min) = step.min_deps_success {
+                let deps_count = step.depends_on.len();
+                if min > deps_count {
+                    return Err(WorkflowError::MinDepsSuccessExceedsDeps {
+                        workflow: self.name.clone(),
+                        step: step.name.clone(),
+                        min_deps_success: min,
+                        actual_deps: deps_count,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// A single step in a workflow
@@ -1237,7 +1265,7 @@ impl WorkflowRunner {
         for step in steps {
             if let Some(min_success) = step.min_deps_success {
                 if min_success > 0 && step.depends_on.is_empty() {
-                    return Err(WorkflowError::InvalidMinDepsSuccess {
+                    return Err(WorkflowError::MinDepsSuccessWithoutDeps {
                         workflow: workflow_name.to_string(),
                         step: step.name.clone(),
                     }
@@ -2174,6 +2202,7 @@ async fn load_workflow_with_depth(path: &Path, depth: usize) -> Result<Workflow>
         workflow = merge_workflows(parent, workflow);
     }
 
+    workflow.validate()?;
     Ok(workflow)
 }
 
@@ -2210,6 +2239,7 @@ async fn load_workflow_from_source_with_depth(
                 workflow = merge_workflows(parent, workflow);
             }
 
+            workflow.validate()?;
             Ok(workflow)
         }
     }
@@ -3348,5 +3378,98 @@ line2"}"#;
         "#;
         let step: Step = toml::from_str(toml_str).unwrap();
         assert!(!step.continue_on_error);
+    }
+
+    #[tokio::test]
+    async fn test_min_deps_success_validation_exceeds_deps() {
+        let dir = tempdir().unwrap();
+        let workflow_path = dir.path().join("test.toml");
+        std::fs::write(
+            &workflow_path,
+            r#"
+name = "test-workflow"
+
+[[steps]]
+name = "step1"
+backend = "claude"
+prompt = "first"
+
+[[steps]]
+name = "step2"
+backend = "claude"
+prompt = "second"
+
+[[steps]]
+name = "step3"
+backend = "claude"
+prompt = "synthesize"
+depends_on = ["step1", "step2"]
+min_deps_success = 5
+"#,
+        )
+        .unwrap();
+
+        let result = load_workflow(&workflow_path).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("min_deps_success (5) exceeding number of dependencies (2)"));
+        assert!(err.contains("step3"));
+    }
+
+    #[tokio::test]
+    async fn test_min_deps_success_validation_empty_deps() {
+        let dir = tempdir().unwrap();
+        let workflow_path = dir.path().join("test.toml");
+        std::fs::write(
+            &workflow_path,
+            r#"
+name = "test-workflow"
+
+[[steps]]
+name = "step1"
+backend = "claude"
+prompt = "run this"
+min_deps_success = 1
+"#,
+        )
+        .unwrap();
+
+        let result = load_workflow(&workflow_path).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("min_deps_success (1) exceeding number of dependencies (0)"));
+    }
+
+    #[tokio::test]
+    async fn test_min_deps_success_validation_valid() {
+        let dir = tempdir().unwrap();
+        let workflow_path = dir.path().join("test.toml");
+        std::fs::write(
+            &workflow_path,
+            r#"
+name = "test-workflow"
+
+[[steps]]
+name = "step1"
+backend = "claude"
+prompt = "first"
+
+[[steps]]
+name = "step2"
+backend = "claude"
+prompt = "second"
+
+[[steps]]
+name = "step3"
+backend = "claude"
+prompt = "synthesize"
+depends_on = ["step1", "step2"]
+min_deps_success = 2
+"#,
+        )
+        .unwrap();
+
+        let result = load_workflow(&workflow_path).await;
+        assert!(result.is_ok());
     }
 }
