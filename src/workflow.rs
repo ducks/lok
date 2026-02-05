@@ -13,6 +13,7 @@ use crate::backend;
 use crate::config::Config;
 use crate::context::{resolve_format_command, resolve_verify_command, CodebaseContext};
 use crate::git_agent;
+use crate::utils::summarize_backend_error;
 use anyhow::{Context, Result};
 use colored::Colorize;
 use thiserror::Error;
@@ -828,7 +829,8 @@ impl WorkflowRunner {
                                         last_error = e.to_string();
                                         if attempt == max_retries {
                                             let elapsed_ms = start.elapsed().as_millis() as u64;
-                                            println!("  {} {}", "✗".red(), e);
+                                            let summary = summarize_backend_error("shell", &e.to_string());
+                                            println!("  {} {}", "✗".red(), summary);
                                             return StepResult {
                                                 name: step_name,
                                                 output: format!("Error: {}", e),
@@ -838,7 +840,8 @@ impl WorkflowRunner {
                                                 backend: None,
                                             };
                                         }
-                                        println!("  {} {} (will retry)", "⚠".yellow(), e);
+                                        let summary = summarize_backend_error("shell", &e.to_string());
+                                        println!("  {} {} (will retry)", "⚠".yellow(), summary);
                                     }
                                     Err(_) => {
                                         last_error = format!("Step timed out after {}s", timeout_duration.as_secs());
@@ -940,7 +943,8 @@ impl WorkflowRunner {
                                     last_error = e.to_string();
                                     if attempt == max_retries {
                                         let elapsed_ms = start.elapsed().as_millis() as u64;
-                                        println!("  {} {}", "✗".red(), e);
+                                        let summary = summarize_backend_error(&backend_name, &e.to_string());
+                                        println!("  {} {} {}", "✗".red(), backend_name.to_uppercase(), summary);
                                         return StepResult {
                                             name: step_name,
                                             output: format!("Error: {}", e),
@@ -950,13 +954,14 @@ impl WorkflowRunner {
                                             backend: Some(backend_name),
                                         };
                                     }
-                                    println!("  {} {} (will retry)", "⚠".yellow(), e);
+                                    let summary = summarize_backend_error(&backend_name, &e.to_string());
+                                    println!("  {} {} {} (will retry)", "⚠".yellow(), backend_name.to_uppercase(), summary);
                                 }
                                 Err(_) => {
                                     last_error = format!("Step timed out after {}s", timeout_duration.as_secs());
                                     if attempt == max_retries {
                                         let elapsed_ms = start.elapsed().as_millis() as u64;
-                                        println!("  {} timed out after {}s", "✗".red(), timeout_duration.as_secs());
+                                        println!("  {} {} timed out after {}s", "✗".red(), backend_name.to_uppercase(), timeout_duration.as_secs());
                                         return StepResult {
                                             name: step_name,
                                             output: format!("Error: {}", last_error),
@@ -966,7 +971,7 @@ impl WorkflowRunner {
                                             backend: Some(backend_name),
                                         };
                                     }
-                                    println!("  {} timed out (will retry)", "⚠".yellow());
+                                    println!("  {} {} timed out (will retry)", "⚠".yellow(), backend_name.to_uppercase());
                                 }
                             }
                         }
