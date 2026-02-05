@@ -62,6 +62,14 @@ pub enum WorkflowError {
         min_deps_success: usize,
         actual_deps: usize,
     },
+
+    #[error("Workflow '{workflow}': step '{step}' has timeout ({timeout}ms) below minimum ({min}ms)\n  hint: use 0 for no timeout, or a value >= {min}ms")]
+    TimeoutTooSmall {
+        workflow: String,
+        step: String,
+        timeout: u64,
+        min: u64,
+    },
 }
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
@@ -116,6 +124,9 @@ static WORKFLOW_BACKENDS_RE: LazyLock<regex::Regex> =
 
 /// Default timeout for workflow steps in milliseconds (2 minutes)
 const DEFAULT_STEP_TIMEOUT_MS: u64 = 120_000;
+
+/// Minimum timeout value in milliseconds (values 1 to MIN-1 are rejected)
+const MIN_TIMEOUT_MS: u64 = 100;
 
 /// Regex for detecting unknown {{ ... }} variables after all substitutions
 static UNKNOWN_VAR_RE: LazyLock<regex::Regex> =
@@ -196,6 +207,17 @@ impl Workflow {
                         step: step.name.clone(),
                         min_deps_success: min,
                         actual_deps: deps_count,
+                    });
+                }
+            }
+            // Validate timeout: 0 means no timeout, but values between 1 and MIN are likely mistakes
+            if let Some(timeout) = step.timeout {
+                if timeout > 0 && timeout < MIN_TIMEOUT_MS {
+                    return Err(WorkflowError::TimeoutTooSmall {
+                        workflow: self.name.clone(),
+                        step: step.name.clone(),
+                        timeout,
+                        min: MIN_TIMEOUT_MS,
                     });
                 }
             }
@@ -3465,6 +3487,105 @@ backend = "claude"
 prompt = "synthesize"
 depends_on = ["step1", "step2"]
 min_deps_success = 2
+"#,
+        )
+        .unwrap();
+
+        let result = load_workflow(&workflow_path).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_timeout_too_small_validation() {
+        let dir = tempdir().unwrap();
+        let workflow_path = dir.path().join("test.toml");
+
+        // Test that timeout: 50 is rejected (below minimum)
+        std::fs::write(
+            &workflow_path,
+            r#"
+name = "test-workflow"
+
+[[steps]]
+name = "step1"
+backend = "claude"
+prompt = "test"
+timeout = 50
+"#,
+        )
+        .unwrap();
+
+        let result = load_workflow(&workflow_path).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("timeout (50ms) below minimum (100ms)"));
+        assert!(err.contains("step1"));
+    }
+
+    #[tokio::test]
+    async fn test_timeout_zero_allowed() {
+        let dir = tempdir().unwrap();
+        let workflow_path = dir.path().join("test.toml");
+
+        // Test that timeout: 0 is allowed (means no timeout)
+        std::fs::write(
+            &workflow_path,
+            r#"
+name = "test-workflow"
+
+[[steps]]
+name = "step1"
+backend = "claude"
+prompt = "test"
+timeout = 0
+"#,
+        )
+        .unwrap();
+
+        let result = load_workflow(&workflow_path).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_timeout_at_minimum_allowed() {
+        let dir = tempdir().unwrap();
+        let workflow_path = dir.path().join("test.toml");
+
+        // Test that timeout: 100 is allowed (at minimum)
+        std::fs::write(
+            &workflow_path,
+            r#"
+name = "test-workflow"
+
+[[steps]]
+name = "step1"
+backend = "claude"
+prompt = "test"
+timeout = 100
+"#,
+        )
+        .unwrap();
+
+        let result = load_workflow(&workflow_path).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_timeout_normal_value_allowed() {
+        let dir = tempdir().unwrap();
+        let workflow_path = dir.path().join("test.toml");
+
+        // Test that timeout: 5000 is allowed (normal value)
+        std::fs::write(
+            &workflow_path,
+            r#"
+name = "test-workflow"
+
+[[steps]]
+name = "step1"
+backend = "claude"
+prompt = "test"
+timeout = 5000
 "#,
         )
         .unwrap();
