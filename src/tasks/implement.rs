@@ -42,6 +42,33 @@ DO:
 
 YOUR ENTIRE RESPONSE MUST BE VALID SOURCE CODE THAT CAN BE WRITTEN DIRECTLY TO A FILE."#;
 
+const FIX_PROMPT: &str = r#"Fix the compilation error in this code.
+
+## File
+{file}
+
+## Current Code
+{code}
+
+## Error
+{error}
+
+## CRITICAL INSTRUCTIONS
+
+You are a code generator. Output ONLY the complete fixed source code.
+
+DO NOT:
+- Use markdown code fences (```)
+- Explain the fix
+- Add commentary
+
+DO:
+- Output the COMPLETE file with the fix applied
+- Start with line 1, end with the last line
+- Fix ALL errors shown above
+
+YOUR ENTIRE RESPONSE MUST BE THE COMPLETE FIXED SOURCE FILE."#;
+
 const SYNTHESIZE_PROMPT: &str = r#"Multiple backends proposed implementations for this file.
 
 ## Spec
@@ -377,17 +404,79 @@ pub async fn run(
 
             println!("      {} Wrote {}", "+".green(), target_file);
 
-            // Mark subtask as complete
-            update_spec_status(spec_path, SubtaskStatus::Complete)?;
-        }
+            // Verify and auto-fix loop
+            if verify {
+                let mut current_code = clean_code;
+                let max_fix_attempts = 3;
+                let mut succeeded = false;
 
-        // Verify step if enabled
-        if verify {
-            println!("  {} Verifying...", "→".cyan());
-            if let Err(e) = run_verification(dir) {
-                println!("  {} Verification failed: {}", "✗".red(), e);
+                for attempt in 0..=max_fix_attempts {
+                    match run_verification(dir) {
+                        Ok(()) => {
+                            if attempt > 0 {
+                                println!(
+                                    "      {} Fixed after {} attempt(s)",
+                                    "✓".green(),
+                                    attempt
+                                );
+                            }
+                            succeeded = true;
+                            break;
+                        }
+                        Err(e) if attempt < max_fix_attempts => {
+                            let error_msg = e.to_string();
+                            println!(
+                                "      {} Verify failed (attempt {}/{}), auto-fixing...",
+                                "!".yellow(),
+                                attempt + 1,
+                                max_fix_attempts
+                            );
+
+                            // Query LLM to fix the error
+                            let fix_prompt = FIX_PROMPT
+                                .replace("{file}", &target_file)
+                                .replace("{code}", &current_code)
+                                .replace("{error}", &error_msg);
+
+                            let fix_backend = backend_filter.unwrap_or("claude");
+                            let fix_backends = backend::get_backends(config, Some(fix_backend))?;
+                            let fix_results =
+                                backend::run_query(&fix_backends, &fix_prompt, dir, config).await?;
+
+                            if let Some(result) = fix_results.iter().find(|r| r.success) {
+                                if let Some(fixed_code) = clean_code_output(&result.output) {
+                                    current_code = fixed_code;
+                                    fs::write(&target_path, &current_code)?;
+                                    println!("      {} Applied fix", "→".cyan());
+                                } else {
+                                    println!("      {} Fix output invalid", "✗".red());
+                                    break;
+                                }
+                            } else {
+                                println!("      {} Fix query failed", "✗".red());
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            println!(
+                                "      {} Verification failed after {} attempts: {}",
+                                "✗".red(),
+                                max_fix_attempts,
+                                e
+                            );
+                            break;
+                        }
+                    }
+                }
+
+                if succeeded {
+                    update_spec_status(spec_path, SubtaskStatus::Complete)?;
+                } else {
+                    update_spec_status(spec_path, SubtaskStatus::Failed)?;
+                }
             } else {
-                println!("  {} Verification passed", "✓".green());
+                // No verification, mark complete immediately
+                update_spec_status(spec_path, SubtaskStatus::Complete)?;
             }
         }
 
