@@ -52,12 +52,22 @@ src/
 
 ## Build & Test
 
+This project uses NixOS. Always run commands via nix-shell:
+
 ```bash
-cargo build              # Build debug
-cargo build --release    # Build release
-cargo test               # Run tests
-cargo clippy             # Lint (fix all warnings)
-cargo fmt                # Format code
+# From the lok directory
+cd ~/dev/lok
+nix-shell --run "cargo build"
+nix-shell --run "cargo test"
+nix-shell --run "cargo clippy"
+
+# Run lok (must specify --bin lok due to multiple binaries)
+nix-shell --run "cargo run --bin lok -- doctor"
+nix-shell --run "cargo run --bin lok -- hunt /path/to/repo"
+
+# Run lok from another directory (e.g., analyzing discourse)
+cd ~/discourse/discourse
+nix-shell ~/dev/lok/shell.nix --run "cargo run --manifest-path ~/dev/lok/Cargo.toml --bin lok -- ci 123"
 ```
 
 For Bedrock support: `cargo build --features bedrock`
@@ -141,13 +151,15 @@ internally to prevent LLM outputs from being misinterpreted as variables.
 
 ## Testing Locally
 
+All commands require nix-shell (see Build & Test section above):
+
 ```bash
 # Quick smoke test
-cargo run --bin lok -- doctor
+nix-shell --run "cargo run --bin lok -- doctor"
 
 # Test hunt on a repo
-cargo run --bin lok -- hunt /path/to/repo
+nix-shell --run "cargo run --bin lok -- hunt /path/to/repo"
 
 # Test a workflow
-cargo run --bin lok -- run fix 123
+nix-shell --run "cargo run --bin lok -- run fix 123"
 ```
