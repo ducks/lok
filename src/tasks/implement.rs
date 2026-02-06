@@ -1,5 +1,6 @@
 use crate::backend::{self, QueryResult};
 use crate::config::Config;
+use crate::utils::{classify_backend_error, BackendErrorKind};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use serde::Deserialize;
@@ -329,13 +330,61 @@ pub async fn run(
                 )
                 .replace("{parent_what}", &step_spec.what);
 
-            // Query backends
-            let results = backend::run_query(&backends, &prompt, dir, config).await?;
+            // Query backends with retry logic
+            let max_query_retries = 3;
+            let mut results = Vec::new();
+            let mut last_errors = Vec::new();
+
+            for retry in 0..max_query_retries {
+                results = backend::run_query(&backends, &prompt, dir, config).await?;
+                let successful: Vec<&QueryResult> = results.iter().filter(|r| r.success).collect();
+
+                if !successful.is_empty() {
+                    break;
+                }
+
+                // Collect and classify errors
+                last_errors.clear();
+                let mut should_retry = false;
+                for r in &results {
+                    if !r.success {
+                        let kind = classify_backend_error(&r.output);
+                        last_errors.push(format!(
+                            "{}: {} ({})",
+                            r.backend,
+                            kind.description(),
+                            r.output.lines().next().unwrap_or("no output")
+                        ));
+
+                        // Only retry on unknown errors or network errors
+                        if matches!(
+                            kind,
+                            BackendErrorKind::Unknown | BackendErrorKind::NetworkError
+                        ) {
+                            should_retry = true;
+                        }
+                    }
+                }
+
+                if !should_retry || retry == max_query_retries - 1 {
+                    break;
+                }
+
+                println!(
+                    "      {} All backends failed (attempt {}/{}), retrying...",
+                    "!".yellow(),
+                    retry + 1,
+                    max_query_retries
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(2 * (retry as u64 + 1))).await;
+            }
+
             let successful: Vec<&QueryResult> = results.iter().filter(|r| r.success).collect();
 
             if successful.is_empty() {
-                println!("      {} All backends failed", "✗".red());
-                update_spec_status(spec_path, SubtaskStatus::Failed)?;
+                let error_summary = last_errors.join("; ");
+                println!("      {} All backends failed: {}", "✗".red(), error_summary);
+                update_spec_status_with_error(spec_path, SubtaskStatus::Failed, &error_summary)?;
                 continue;
             }
 
@@ -566,6 +615,14 @@ fn run_verification(dir: &Path) -> Result<()> {
 }
 
 fn update_spec_status(spec_path: &Path, status: SubtaskStatus) -> Result<()> {
+    update_spec_status_with_error(spec_path, status, "")
+}
+
+fn update_spec_status_with_error(
+    spec_path: &Path,
+    status: SubtaskStatus,
+    error: &str,
+) -> Result<()> {
     let content = fs::read_to_string(spec_path)?;
     let status_str = match status {
         SubtaskStatus::Pending => "pending",
@@ -573,34 +630,54 @@ fn update_spec_status(spec_path: &Path, status: SubtaskStatus) -> Result<()> {
         SubtaskStatus::Failed => "failed",
     };
 
-    // Check if status line already exists
-    let new_content = if content.contains("\nstatus = ") || content.starts_with("status = ") {
-        // Replace existing status
+    // Update or add status
+    let mut new_content = if content.contains("\nstatus = ") || content.starts_with("status = ") {
         let re = regex::Regex::new(r#"status\s*=\s*"[^"]*""#).unwrap();
         re.replace(&content, format!(r#"status = "{}""#, status_str))
             .to_string()
     } else {
-        // Add status at the beginning (after order if present)
         let lines: Vec<&str> = content.lines().collect();
         let mut new_lines = Vec::new();
         let mut status_added = false;
 
         for line in lines {
             new_lines.push(line.to_string());
-            // Add status after 'order' or 'what' line if not added yet
             if !status_added && (line.starts_with("order") || line.starts_with("what")) {
                 new_lines.push(format!(r#"status = "{}""#, status_str));
                 status_added = true;
             }
         }
 
-        // If we never found a good place, add at the end
         if !status_added {
             new_lines.push(format!(r#"status = "{}""#, status_str));
         }
 
         new_lines.join("\n")
     };
+
+    // Update or add/remove last_error
+    if !error.is_empty() {
+        let escaped_error = error.replace('\\', "\\\\").replace('"', "\\\"");
+        if new_content.contains("\nlast_error = ") || new_content.starts_with("last_error = ") {
+            let re = regex::Regex::new(r#"last_error\s*=\s*"[^"]*""#).unwrap();
+            new_content = re
+                .replace(&new_content, format!(r#"last_error = "{}""#, escaped_error))
+                .to_string();
+        } else {
+            // Add after status line
+            let re = regex::Regex::new(r#"(status\s*=\s*"[^"]*")"#).unwrap();
+            new_content = re
+                .replace(
+                    &new_content,
+                    format!(r#"$1\nlast_error = "{}""#, escaped_error),
+                )
+                .to_string();
+        }
+    } else if new_content.contains("\nlast_error = ") {
+        // Remove last_error on success
+        let re = regex::Regex::new(r#"\nlast_error\s*=\s*"[^"]*""#).unwrap();
+        new_content = re.replace(&new_content, "").to_string();
+    }
 
     fs::write(spec_path, new_content)?;
     Ok(())
