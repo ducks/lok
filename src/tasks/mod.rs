@@ -2,6 +2,7 @@ pub mod audit;
 pub mod ci;
 pub mod fix;
 pub mod hunt;
+pub mod implement;
 pub mod spec;
 
 use crate::backend;

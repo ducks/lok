@@ -128,6 +128,24 @@ enum Commands {
         backend: Option<String>,
     },
 
+    /// Implement specs from .arf/specs/ directory
+    Implement {
+        /// Specific step to implement (e.g., "01-lexer"). Runs all if omitted.
+        step: Option<String>,
+
+        /// Working directory
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+
+        /// Specific backends to use (comma-separated)
+        #[arg(short, long)]
+        backend: Option<String>,
+
+        /// Skip verification after each step
+        #[arg(long)]
+        no_verify: bool,
+    },
+
     /// Initialize a new lok.toml config file
     Init {
         /// Also initialize git-agent with orphan branch + worktree
@@ -416,6 +434,21 @@ async fn main() -> Result<()> {
         }
         Commands::Spec { task, dir, backend } => {
             tasks::spec::run(&config, &dir, &task, backend.as_deref()).await?;
+        }
+        Commands::Implement {
+            step,
+            dir,
+            backend,
+            no_verify,
+        } => {
+            tasks::implement::run(
+                &config,
+                &dir,
+                step.as_deref(),
+                backend.as_deref(),
+                !no_verify,
+            )
+            .await?;
         }
         Commands::Init { agent } => {
             // Only create lok.toml if it doesn't exist
