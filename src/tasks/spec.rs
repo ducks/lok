@@ -75,6 +75,41 @@ IMPORTANT:
 - Be specific and technical in the how/tests fields
 - Output ONLY the TOML blocks, no other text"#;
 
+const SUBTASK_PROMPT: &str = r#"Break this component into subtasks (individual files).
+
+## Component
+Name: {name}
+What: {what}
+How: {how}
+
+## Parent Task
+{task}
+
+## Instructions
+
+Break this component into 2-5 subtasks, where each subtask is a separate file.
+Consider: what distinct pieces make up this component? Each should be independently implementable.
+
+For EACH subtask, output a TOML block:
+
+```toml
+[subtask.subtask_name]
+order = N
+file = "src/{component}/subtask_name.rs"
+what = "One-line description"
+why = "Why this file is needed"
+how = "Implementation details"
+inputs = "What this file receives"
+outputs = "What this file exports"
+tests = "How to verify"
+```
+
+IMPORTANT:
+- Use snake_case for subtask names
+- File paths should be logical (src/{component}/...)
+- Order by dependencies within this component (1 = first)
+- Output ONLY the TOML blocks, no other text"#;
+
 #[derive(Debug, Deserialize)]
 struct SpecEntry {
     #[serde(default)]
@@ -91,6 +126,25 @@ struct SpecEntry {
     outputs: Option<String>,
     #[serde(default)]
     dependencies: Vec<String>,
+    #[serde(default)]
+    tests: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubtaskEntry {
+    #[serde(default)]
+    order: u32,
+    #[serde(default)]
+    file: Option<String>,
+    what: String,
+    #[serde(default)]
+    why: Option<String>,
+    #[serde(default)]
+    how: Option<String>,
+    #[serde(default)]
+    inputs: Option<String>,
+    #[serde(default)]
+    outputs: Option<String>,
     #[serde(default)]
     tests: Option<String>,
 }
@@ -202,7 +256,36 @@ pub async fn run(
     let roadmap_path = specs_dir.join("roadmap.arf");
     fs::write(&roadmap_path, &roadmap_content).context("Failed to write roadmap.arf")?;
 
-    // Write specs
+    // Step 4: Generate subtasks for each spec
+    println!(
+        "{} Step 4/4: Breaking specs into subtasks...",
+        "spec:".cyan().bold()
+    );
+
+    let mut all_subtasks: Vec<(String, Vec<(String, SubtaskEntry)>)> = Vec::new();
+
+    for (name, spec) in &specs {
+        let subtask_prompt = SUBTASK_PROMPT
+            .replace("{name}", name)
+            .replace("{what}", &spec.what)
+            .replace("{how}", spec.how.as_deref().unwrap_or("Not specified"))
+            .replace("{task}", task);
+
+        let subtask_results =
+            backend::run_query(&synth_backends, &subtask_prompt, dir, config).await?;
+
+        if let Some(result) = subtask_results.iter().find(|r| r.success) {
+            let mut subtasks = parse_subtasks(&result.output)?;
+            subtasks.sort_by_key(|(_, s)| s.order);
+            println!("  {} {} → {} subtasks", "✓".green(), name, subtasks.len());
+            all_subtasks.push((name.clone(), subtasks));
+        } else {
+            println!("  {} {} → no subtasks", "!".yellow(), name);
+            all_subtasks.push((name.clone(), Vec::new()));
+        }
+    }
+
+    // Write specs with nested structure
     println!();
     println!("{}", "=".repeat(50).dimmed());
     println!(
@@ -214,11 +297,29 @@ pub async fn run(
     println!("  {} roadmap.arf", "+".green());
 
     for (name, spec) in &specs {
-        let filename = format!("{:02}-{}.arf", spec.order, name);
-        let path = specs_dir.join(&filename);
-        let content = format_spec(spec);
-        fs::write(&path, &content).with_context(|| format!("Failed to write {}", filename))?;
-        println!("  {} {}", "+".green(), filename);
+        let step_dir = specs_dir.join(format!("{:02}-{}", spec.order, name));
+        fs::create_dir_all(&step_dir)?;
+
+        // Write the step's main spec
+        let spec_path = step_dir.join("spec.arf");
+        fs::write(&spec_path, format_spec(spec))?;
+        println!("  {} {:02}-{}/spec.arf", "+".green(), spec.order, name);
+
+        // Write subtasks if any
+        if let Some((_, subtasks)) = all_subtasks.iter().find(|(n, _)| n == name) {
+            for (subtask_name, subtask) in subtasks {
+                let subtask_filename = format!("{:02}-{}.arf", subtask.order, subtask_name);
+                let subtask_path = step_dir.join(&subtask_filename);
+                fs::write(&subtask_path, format_subtask(subtask))?;
+                println!(
+                    "  {} {:02}-{}/{}",
+                    "+".green(),
+                    spec.order,
+                    name,
+                    subtask_filename
+                );
+            }
+        }
     }
 
     println!();
@@ -286,6 +387,31 @@ Output ONLY the TOML blocks."#,
     let roadmap_content = format_roadmap(task, &specs);
     fs::write(specs_dir.join("roadmap.arf"), &roadmap_content)?;
 
+    // Generate subtasks for each spec
+    println!("{} Breaking specs into subtasks...", "spec:".cyan().bold());
+
+    let mut all_subtasks: Vec<(String, Vec<(String, SubtaskEntry)>)> = Vec::new();
+
+    for (name, spec) in &specs {
+        let subtask_prompt = SUBTASK_PROMPT
+            .replace("{name}", name)
+            .replace("{what}", &spec.what)
+            .replace("{how}", spec.how.as_deref().unwrap_or("Not specified"))
+            .replace("{task}", task);
+
+        let subtask_results = backend::run_query(&backends, &subtask_prompt, dir, config).await?;
+
+        if let Some(result) = subtask_results.iter().find(|r| r.success) {
+            let mut subtasks = parse_subtasks(&result.output)?;
+            subtasks.sort_by_key(|(_, s)| s.order);
+            println!("  {} {} → {} subtasks", "✓".green(), name, subtasks.len());
+            all_subtasks.push((name.clone(), subtasks));
+        } else {
+            println!("  {} {} → no subtasks", "!".yellow(), name);
+            all_subtasks.push((name.clone(), Vec::new()));
+        }
+    }
+
     println!();
     println!("{}", "=".repeat(50).dimmed());
     println!("{} Generated {} specs:", "spec:".cyan().bold(), specs.len());
@@ -293,10 +419,27 @@ Output ONLY the TOML blocks."#,
     println!("  {} roadmap.arf", "+".green());
 
     for (name, spec) in &specs {
-        let filename = format!("{:02}-{}.arf", spec.order, name);
-        let path = specs_dir.join(&filename);
-        fs::write(&path, format_spec(spec))?;
-        println!("  {} {}", "+".green(), filename);
+        let step_dir = specs_dir.join(format!("{:02}-{}", spec.order, name));
+        fs::create_dir_all(&step_dir)?;
+
+        let spec_path = step_dir.join("spec.arf");
+        fs::write(&spec_path, format_spec(spec))?;
+        println!("  {} {:02}-{}/spec.arf", "+".green(), spec.order, name);
+
+        if let Some((_, subtasks)) = all_subtasks.iter().find(|(n, _)| n == name) {
+            for (subtask_name, subtask) in subtasks {
+                let subtask_filename = format!("{:02}-{}.arf", subtask.order, subtask_name);
+                let subtask_path = step_dir.join(&subtask_filename);
+                fs::write(&subtask_path, format_subtask(subtask))?;
+                println!(
+                    "  {} {:02}-{}/{}",
+                    "+".green(),
+                    spec.order,
+                    name,
+                    subtask_filename
+                );
+            }
+        }
     }
 
     println!();
@@ -356,7 +499,7 @@ fn format_roadmap(task: &str, specs: &[(String, SpecEntry)]) -> String {
         out.push_str("[[steps]]\n");
         out.push_str(&format!("order = {}\n", spec.order));
         out.push_str(&format!("spec = {:?}\n", name));
-        out.push_str(&format!("file = \"{:02}-{}.arf\"\n", spec.order, name));
+        out.push_str(&format!("dir = \"{:02}-{}\"\n", spec.order, name));
         out.push_str(&format!("summary = {:?}\n", spec.what));
         if !spec.dependencies.is_empty() {
             out.push_str(&format!("depends_on = {:?}\n", spec.dependencies));
@@ -398,6 +541,82 @@ fn format_spec(spec: &SpecEntry) -> String {
     }
 
     if let Some(ref tests) = spec.tests {
+        out.push_str(&format!("tests = {:?}\n", tests));
+    }
+
+    out
+}
+
+fn parse_subtasks(output: &str) -> Result<Vec<(String, SubtaskEntry)>> {
+    let mut subtasks = Vec::new();
+    let mut current_name: Option<String> = None;
+    let mut current_block = String::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("[subtask.") && trimmed.ends_with(']') {
+            if let Some(name) = current_name.take() {
+                if let Ok(entry) = parse_single_subtask(&current_block) {
+                    subtasks.push((name, entry));
+                }
+            }
+
+            let name = trimmed
+                .trim_start_matches("[subtask.")
+                .trim_end_matches(']')
+                .to_string();
+            current_name = Some(name);
+            current_block.clear();
+        } else if current_name.is_some() && !trimmed.starts_with("```") {
+            current_block.push_str(line);
+            current_block.push('\n');
+        }
+    }
+
+    if let Some(name) = current_name {
+        if let Ok(entry) = parse_single_subtask(&current_block) {
+            subtasks.push((name, entry));
+        }
+    }
+
+    Ok(subtasks)
+}
+
+fn parse_single_subtask(block: &str) -> Result<SubtaskEntry> {
+    toml::from_str(block).context("Failed to parse subtask TOML")
+}
+
+fn format_subtask(subtask: &SubtaskEntry) -> String {
+    let mut out = String::new();
+
+    out.push_str(&format!("order = {}\n", subtask.order));
+    out.push_str(&format!("what = {:?}\n", subtask.what));
+
+    if let Some(ref file) = subtask.file {
+        out.push_str(&format!("file = {:?}\n", file));
+    }
+
+    if let Some(ref why) = subtask.why {
+        out.push_str(&format!("why = {:?}\n", why));
+    }
+
+    if let Some(ref how) = subtask.how {
+        out.push_str(&format!("how = {:?}\n", how));
+    }
+
+    out.push('\n');
+    out.push_str("[context]\n");
+
+    if let Some(ref inputs) = subtask.inputs {
+        out.push_str(&format!("inputs = {:?}\n", inputs));
+    }
+
+    if let Some(ref outputs) = subtask.outputs {
+        out.push_str(&format!("outputs = {:?}\n", outputs));
+    }
+
+    if let Some(ref tests) = subtask.tests {
         out.push_str(&format!("tests = {:?}\n", tests));
     }
 
