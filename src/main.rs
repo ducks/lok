@@ -114,6 +114,20 @@ enum Commands {
         dir: PathBuf,
     },
 
+    /// Generate ARF specs from a high-level task description
+    Spec {
+        /// High-level task description (e.g., "Build a C99 compiler")
+        task: String,
+
+        /// Working directory
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+
+        /// Specific backends to use (comma-separated)
+        #[arg(short, long)]
+        backend: Option<String>,
+    },
+
     /// Initialize a new lok.toml config file
     Init {
         /// Also initialize git-agent with orphan branch + worktree
@@ -399,6 +413,9 @@ async fn main() -> Result<()> {
         }
         Commands::Audit { dir } => {
             tasks::audit::run(&config, &dir).await?;
+        }
+        Commands::Spec { task, dir, backend } => {
+            tasks::spec::run(&config, &dir, &task, backend.as_deref()).await?;
         }
         Commands::Init { agent } => {
             // Only create lok.toml if it doesn't exist

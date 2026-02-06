@@ -2,6 +2,7 @@ pub mod audit;
 pub mod ci;
 pub mod fix;
 pub mod hunt;
+pub mod spec;
 
 use crate::backend;
 use crate::config::Config;
