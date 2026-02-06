@@ -22,13 +22,25 @@ Outputs: {outputs}
 ## Parent Component
 {parent_what}
 
-## Instructions
+## CRITICAL INSTRUCTIONS
 
-Write the complete implementation for this file. Output ONLY the code, no markdown
-fences, no explanations. The code should be ready to write directly to the file.
+You are a code generator. Output ONLY raw source code.
 
-Be thorough and complete. Include all necessary imports, types, and implementations.
-Follow idiomatic patterns for the language."#;
+DO NOT:
+- Use markdown code fences (```)
+- Say "here's the code" or similar
+- Ask for permissions or confirmation
+- Explain what you're about to do
+- Add commentary before or after the code
+
+DO:
+- Start your response with line 1 of the source file
+- Include all necessary imports, types, and implementations
+- Be thorough and complete
+- Follow idiomatic patterns for the language
+- End with the last line of code, nothing after
+
+YOUR ENTIRE RESPONSE MUST BE VALID SOURCE CODE THAT CAN BE WRITTEN DIRECTLY TO A FILE."#;
 
 const SYNTHESIZE_PROMPT: &str = r#"Multiple backends proposed implementations for this file.
 
@@ -40,14 +52,18 @@ What: {what}
 
 {proposals}
 
-## Instructions
+## CRITICAL INSTRUCTIONS
 
-Analyze these implementations and create the best version that:
+You are a code generator. Output ONLY raw source code.
+
+Analyze the proposals and create the best version that:
 1. Takes the best ideas from each
 2. Fixes any bugs or issues
 3. Is complete and production-ready
 
-Output ONLY the final code, no markdown fences, no explanations."#;
+DO NOT use markdown fences. DO NOT add explanations.
+Start with line 1 of the source file. End with the last line of code.
+YOUR ENTIRE RESPONSE MUST BE VALID SOURCE CODE."#;
 
 #[derive(Debug, Deserialize)]
 struct Roadmap {
@@ -299,8 +315,18 @@ pub async fn run(
                 successful[0].output.clone()
             };
 
-            // Clean up code (remove markdown fences if present)
-            let clean_code = clean_code_output(&final_code);
+            // Clean up and validate code output
+            let clean_code = match clean_code_output(&final_code) {
+                Some(code) => code,
+                None => {
+                    println!(
+                        "      {} Output was not valid code, skipping {}",
+                        "✗".red(),
+                        target_file
+                    );
+                    continue;
+                }
+            };
 
             // Create parent directories and write file
             let target_path = dir.join(&target_file);
@@ -334,11 +360,33 @@ pub async fn run(
     Ok(())
 }
 
-fn clean_code_output(code: &str) -> String {
+fn clean_code_output(code: &str) -> Option<String> {
     let code = code.trim();
 
+    // Detect non-code outputs (LLM asking for permissions, explaining, etc.)
+    let bad_patterns = [
+        "I don't have",
+        "I cannot",
+        "I can't",
+        "permission",
+        "Here's the",
+        "Here is the",
+        "Let me",
+        "I'll create",
+        "I will create",
+        "Once you grant",
+        "The file is ready",
+    ];
+
+    let first_100 = &code[..code.len().min(100)].to_lowercase();
+    for pattern in bad_patterns {
+        if first_100.contains(&pattern.to_lowercase()) {
+            return None; // This is not code
+        }
+    }
+
     // Remove markdown code fences if present
-    if code.starts_with("```") {
+    let cleaned = if code.starts_with("```") {
         let lines: Vec<&str> = code.lines().collect();
         if lines.len() >= 2 {
             let start = 1; // Skip first ``` line
@@ -347,11 +395,42 @@ fn clean_code_output(code: &str) -> String {
             } else {
                 lines.len()
             };
-            return lines[start..end].join("\n");
+            lines[start..end].join("\n")
+        } else {
+            code.to_string()
         }
-    }
+    } else {
+        code.to_string()
+    };
 
-    code.to_string()
+    // Final check: does it look like code? (starts with common patterns)
+    let first_line = cleaned.lines().next().unwrap_or("");
+    let looks_like_code = first_line.starts_with("use ")
+        || first_line.starts_with("//")
+        || first_line.starts_with("#")
+        || first_line.starts_with("pub ")
+        || first_line.starts_with("mod ")
+        || first_line.starts_with("fn ")
+        || first_line.starts_with("struct ")
+        || first_line.starts_with("enum ")
+        || first_line.starts_with("impl ")
+        || first_line.starts_with("const ")
+        || first_line.starts_with("static ")
+        || first_line.starts_with("type ")
+        || first_line.starts_with("trait ")
+        || first_line.starts_with("#!")
+        || first_line.starts_with("import ")
+        || first_line.starts_with("from ")
+        || first_line.starts_with("package ")
+        || first_line.starts_with("class ")
+        || first_line.starts_with("interface ")
+        || first_line.is_empty(); // Allow empty first line (could have leading comment)
+
+    if looks_like_code || cleaned.lines().count() > 5 {
+        Some(cleaned)
+    } else {
+        None
+    }
 }
 
 fn run_verification(dir: &Path) -> Result<()> {
