@@ -105,6 +105,15 @@ struct ContextSection {
     outputs: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SubtaskStatus {
+    #[default]
+    Pending,
+    Complete,
+    Failed,
+}
+
 #[derive(Debug, Deserialize)]
 struct SubtaskSpec {
     #[serde(default)]
@@ -118,6 +127,8 @@ struct SubtaskSpec {
     how: Option<String>,
     #[serde(default)]
     context: Option<ContextSection>,
+    #[serde(default)]
+    status: SubtaskStatus,
 }
 
 pub async fn run(
@@ -210,28 +221,54 @@ pub async fn run(
         };
 
         // Find and process subtasks
-        let mut subtasks: Vec<(String, SubtaskSpec)> = Vec::new();
+        let mut subtasks: Vec<(String, std::path::PathBuf, SubtaskSpec)> = Vec::new();
         for entry in fs::read_dir(&step_dir)? {
             let entry = entry?;
             let filename = entry.file_name().to_string_lossy().to_string();
             if filename.ends_with(".arf") && filename != "spec.arf" {
                 let content = fs::read_to_string(entry.path())?;
                 if let Ok(subtask) = toml::from_str::<SubtaskSpec>(&content) {
-                    subtasks.push((filename, subtask));
+                    subtasks.push((filename, entry.path(), subtask));
                 }
             }
         }
 
-        subtasks.sort_by_key(|(_, s)| s.order);
+        subtasks.sort_by_key(|(_, _, s)| s.order);
 
         if subtasks.is_empty() {
             println!("  {} No subtasks found", "!".yellow());
             continue;
         }
 
-        println!("  {} {} subtasks to implement", "→".cyan(), subtasks.len());
+        // Count pending/failed subtasks
+        let actionable: Vec<_> = subtasks
+            .iter()
+            .filter(|(_, _, s)| s.status != SubtaskStatus::Complete)
+            .collect();
+        let complete_count = subtasks.len() - actionable.len();
 
-        for (filename, subtask) in &subtasks {
+        if actionable.is_empty() {
+            println!(
+                "  {} All {} subtasks already complete",
+                "✓".green(),
+                subtasks.len()
+            );
+            continue;
+        }
+
+        println!(
+            "  {} {} subtasks ({} complete, {} to do)",
+            "→".cyan(),
+            subtasks.len(),
+            complete_count,
+            actionable.len()
+        );
+
+        for (filename, spec_path, subtask) in &subtasks {
+            // Skip completed subtasks
+            if subtask.status == SubtaskStatus::Complete {
+                continue;
+            }
             let target_file = match &subtask.file {
                 Some(f) => f.clone(),
                 None => {
@@ -271,6 +308,7 @@ pub async fn run(
 
             if successful.is_empty() {
                 println!("      {} All backends failed", "✗".red());
+                update_spec_status(spec_path, SubtaskStatus::Failed)?;
                 continue;
             }
 
@@ -324,6 +362,7 @@ pub async fn run(
                         "✗".red(),
                         target_file
                     );
+                    update_spec_status(spec_path, SubtaskStatus::Failed)?;
                     continue;
                 }
             };
@@ -337,6 +376,9 @@ pub async fn run(
                 .with_context(|| format!("Failed to write {}", target_file))?;
 
             println!("      {} Wrote {}", "+".green(), target_file);
+
+            // Mark subtask as complete
+            update_spec_status(spec_path, SubtaskStatus::Complete)?;
         }
 
         // Verify step if enabled
@@ -431,5 +473,46 @@ fn run_verification(dir: &Path) -> Result<()> {
     }
 
     // No verification available
+    Ok(())
+}
+
+fn update_spec_status(spec_path: &Path, status: SubtaskStatus) -> Result<()> {
+    let content = fs::read_to_string(spec_path)?;
+    let status_str = match status {
+        SubtaskStatus::Pending => "pending",
+        SubtaskStatus::Complete => "complete",
+        SubtaskStatus::Failed => "failed",
+    };
+
+    // Check if status line already exists
+    let new_content = if content.contains("\nstatus = ") || content.starts_with("status = ") {
+        // Replace existing status
+        let re = regex::Regex::new(r#"status\s*=\s*"[^"]*""#).unwrap();
+        re.replace(&content, format!(r#"status = "{}""#, status_str))
+            .to_string()
+    } else {
+        // Add status at the beginning (after order if present)
+        let lines: Vec<&str> = content.lines().collect();
+        let mut new_lines = Vec::new();
+        let mut status_added = false;
+
+        for line in lines {
+            new_lines.push(line.to_string());
+            // Add status after 'order' or 'what' line if not added yet
+            if !status_added && (line.starts_with("order") || line.starts_with("what")) {
+                new_lines.push(format!(r#"status = "{}""#, status_str));
+                status_added = true;
+            }
+        }
+
+        // If we never found a good place, add at the end
+        if !status_added {
+            new_lines.push(format!(r#"status = "{}""#, status_str));
+        }
+
+        new_lines.join("\n")
+    };
+
+    fs::write(spec_path, new_content)?;
     Ok(())
 }
