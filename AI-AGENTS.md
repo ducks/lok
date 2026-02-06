@@ -149,6 +149,36 @@ internally to prevent LLM outputs from being misinterpreted as variables.
 - Don't use `unwrap()` on user input or network responses
 - Don't print secrets or API keys
 
+## Multi-Agent Token Conservation
+
+When orchestrating multiple backends, be conservative with tokens. Every query
+costs money and time.
+
+**Core principle:** If you fire off multiple agents, they must debate, compare,
+or synthesize their outputs. Never query multiple backends just to pick one
+response and discard the rest.
+
+**Good patterns:**
+- Query backends in parallel for different perspectives, then synthesize
+- Have agents debate/argue to reach consensus
+- Use one backend's output as input to another (pipeline)
+- Fail fast with `continue_on_error` + `min_deps_success` for resilience
+
+**Bad patterns:**
+- Query 4 backends, use only 1 response
+- Redundant queries asking the same thing multiple ways
+- Sequential queries that could be parallel
+- Retrying failed backends without backoff
+
+**Example: The spec command**
+```
+Step 1: Query all backends for roadmaps (parallel)
+Step 2: Synthesize roadmaps into consensus
+Step 3: Generate specs from consensus
+```
+
+This ensures every backend's contribution is used, not wasted.
+
 ## Testing Locally
 
 All commands require nix-shell (see Build & Test section above):

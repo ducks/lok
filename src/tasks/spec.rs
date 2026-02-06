@@ -1,4 +1,4 @@
-use crate::backend;
+use crate::backend::{self, QueryResult};
 use crate::config::Config;
 use anyhow::{Context, Result};
 use colored::Colorize;
@@ -6,40 +6,74 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
-const SPEC_PROMPT: &str = r#"You are a software architect decomposing a task into subtasks.
+const ROADMAP_PROMPT: &str = r#"You are planning a software project. Create a high-level roadmap.
 
 ## Task
 {task}
 
 ## Instructions
 
-Break this task into 3-7 discrete, well-scoped subtasks. Each subtask should be:
-- Independently implementable
-- Clearly bounded (not overlapping with others)
-- Testable in isolation
+Break this into 3-7 major components/phases. For each, provide:
+- Name (snake_case)
+- Order (1 = first, no dependencies)
+- One-line description
+- Key dependencies (which other components must be done first)
+- Main technical challenge
 
-For each subtask, output a TOML block with this exact format:
+Output as a simple numbered list. Be specific about the order of implementation."#;
+
+const SYNTHESIZE_PROMPT: &str = r#"Multiple AI backends created roadmaps for this task:
+
+## Task
+{task}
+
+{roadmaps}
+
+## Instructions
+
+Analyze these roadmaps and create a unified plan that:
+1. Takes the best ideas from each
+2. Resolves any contradictions
+3. Ensures proper dependency ordering
+4. Covers all necessary components
+
+Output a final roadmap as a numbered list with:
+- order: N
+- name: component_name
+- summary: one line description
+- depends_on: [list of dependencies]
+- rationale: why this component, why this order (one line)"#;
+
+const SPEC_PROMPT: &str = r#"Generate detailed ARF spec files from this roadmap.
+
+## Task
+{task}
+
+## Consensus Roadmap
+{roadmap}
+
+## Instructions
+
+For EACH component in the roadmap, output a TOML block:
 
 ```toml
-[spec.name_of_subtask]
-order = 1
+[spec.component_name]
+order = N
 what = "One-line description of what to build"
-why = "Why this subtask is needed, what problem it solves"
-how = "Implementation approach, key algorithms or patterns to use"
-backup = "Fallback approach if primary approach fails"
+why = "Why this component is needed"
+how = "Implementation approach, key algorithms or patterns"
+backup = "Fallback approach if primary fails"
 inputs = "What this component receives"
 outputs = "What this component produces"
-dependencies = ["list", "of", "other", "subtask", "names"]
-tests = "How to verify this works correctly"
+dependencies = ["list", "of", "deps"]
+tests = "How to verify correctness"
 ```
 
 IMPORTANT:
-- Use snake_case for subtask names
-- The `order` field is REQUIRED and must be a number starting at 1
-- Order by dependency: foundations first (order=1), then things that depend on them (order=2), etc.
-- Subtasks with the same order number can be built in parallel
-
-Output ONLY the TOML blocks, no other text."#;
+- Use snake_case names matching the roadmap
+- Order must match the roadmap
+- Be specific and technical in the how/tests fields
+- Output ONLY the TOML blocks, no other text"#;
 
 #[derive(Debug, Deserialize)]
 struct SpecEntry {
@@ -67,45 +101,109 @@ pub async fn run(
     task: &str,
     backend_filter: Option<&str>,
 ) -> Result<()> {
+    let backends = backend::get_backends(config, backend_filter)?;
+    let backend_count = backends.len();
+
+    // If only one backend, skip consensus and go direct
+    if backend_count == 1 {
+        println!("{} Planning with single backend...", "spec:".cyan().bold());
+        return run_single_backend(config, dir, task, backend_filter).await;
+    }
+
     println!("{} Planning: {}", "spec:".cyan().bold(), task);
     println!();
 
-    // Build prompt
-    let prompt = SPEC_PROMPT.replace("{task}", task);
+    // Step 1: Get roadmaps from all backends in parallel
+    println!(
+        "{} Step 1/3: Getting roadmaps from {} backends...",
+        "spec:".cyan().bold(),
+        backend_count
+    );
 
-    // Get backends (prefer claude for planning)
-    let backends = backend::get_backends(config, backend_filter)?;
+    let roadmap_prompt = ROADMAP_PROMPT.replace("{task}", task);
+    let roadmap_results = backend::run_query(&backends, &roadmap_prompt, dir, config).await?;
 
-    // Run query
-    let results = backend::run_query(&backends, &prompt, dir, config).await?;
+    let successful_roadmaps: Vec<&QueryResult> =
+        roadmap_results.iter().filter(|r| r.success).collect();
 
-    // Use first successful result
-    let output = results
+    if successful_roadmaps.is_empty() {
+        anyhow::bail!("All backends failed to generate roadmaps");
+    }
+
+    println!(
+        "  {} {}/{} backends responded",
+        "✓".green(),
+        successful_roadmaps.len(),
+        backend_count
+    );
+
+    // Step 2: Synthesize roadmaps into consensus
+    println!(
+        "{} Step 2/3: Synthesizing consensus roadmap...",
+        "spec:".cyan().bold()
+    );
+
+    let roadmaps_text = successful_roadmaps
+        .iter()
+        .map(|r| format!("## {}'s Roadmap\n{}\n", r.backend, r.output))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let synthesize_prompt = SYNTHESIZE_PROMPT
+        .replace("{task}", task)
+        .replace("{roadmaps}", &roadmaps_text);
+
+    // Use first available backend for synthesis (prefer claude)
+    let synth_backend = backend_filter.unwrap_or("claude");
+    let synth_backends = backend::get_backends(config, Some(synth_backend))?;
+    let synth_results =
+        backend::run_query(&synth_backends, &synthesize_prompt, dir, config).await?;
+
+    let consensus = synth_results
         .iter()
         .find(|r| r.success)
         .map(|r| r.output.as_str())
-        .ok_or_else(|| anyhow::anyhow!("All backends failed to generate specs"))?;
+        .ok_or_else(|| anyhow::anyhow!("Failed to synthesize consensus"))?;
 
-    // Parse specs from output
-    let mut specs = parse_specs(output)?;
+    println!("  {} Consensus reached", "✓".green());
+
+    // Step 3: Generate detailed specs from consensus
+    println!(
+        "{} Step 3/3: Generating detailed specs...",
+        "spec:".cyan().bold()
+    );
+
+    let spec_prompt = SPEC_PROMPT
+        .replace("{task}", task)
+        .replace("{roadmap}", consensus);
+
+    let spec_results = backend::run_query(&synth_backends, &spec_prompt, dir, config).await?;
+
+    let spec_output = spec_results
+        .iter()
+        .find(|r| r.success)
+        .map(|r| r.output.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Failed to generate specs"))?;
+
+    // Parse and write specs
+    let mut specs = parse_specs(spec_output)?;
 
     if specs.is_empty() {
-        anyhow::bail!("No specs parsed from LLM output");
+        anyhow::bail!("No specs parsed from output");
     }
 
-    // Sort by order
     specs.sort_by_key(|(_, spec)| spec.order);
 
-    // Create .arf/specs directory
     let specs_dir = dir.join(".arf").join("specs");
     fs::create_dir_all(&specs_dir).context("Failed to create .arf/specs directory")?;
 
-    // Write roadmap first
+    // Write roadmap
     let roadmap_content = format_roadmap(task, &specs);
     let roadmap_path = specs_dir.join("roadmap.arf");
     fs::write(&roadmap_path, &roadmap_content).context("Failed to write roadmap.arf")?;
 
-    // Write each spec with numbered prefix
+    // Write specs
+    println!();
     println!("{}", "=".repeat(50).dimmed());
     println!(
         "{} Generated {} specs in .arf/specs/:",
@@ -129,26 +227,99 @@ pub async fn run(
     Ok(())
 }
 
+async fn run_single_backend(
+    config: &Config,
+    dir: &Path,
+    task: &str,
+    backend_filter: Option<&str>,
+) -> Result<()> {
+    // Combined prompt for single backend
+    let prompt = format!(
+        r#"You are a software architect. Plan and spec out this task.
+
+## Task
+{task}
+
+## Instructions
+
+1. First, create a roadmap of 3-7 components
+2. Then, for EACH component, output a TOML spec block:
+
+```toml
+[spec.component_name]
+order = N
+what = "One-line description"
+why = "Why needed"
+how = "Implementation approach"
+backup = "Fallback if primary fails"
+inputs = "What it receives"
+outputs = "What it produces"
+dependencies = ["deps"]
+tests = "How to verify"
+```
+
+Use snake_case names. Order by dependencies (1 = first).
+Output ONLY the TOML blocks."#,
+        task = task
+    );
+
+    let backends = backend::get_backends(config, backend_filter)?;
+    let results = backend::run_query(&backends, &prompt, dir, config).await?;
+
+    let output = results
+        .iter()
+        .find(|r| r.success)
+        .map(|r| r.output.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Backend failed to generate specs"))?;
+
+    let mut specs = parse_specs(output)?;
+
+    if specs.is_empty() {
+        anyhow::bail!("No specs parsed");
+    }
+
+    specs.sort_by_key(|(_, spec)| spec.order);
+
+    let specs_dir = dir.join(".arf").join("specs");
+    fs::create_dir_all(&specs_dir)?;
+
+    let roadmap_content = format_roadmap(task, &specs);
+    fs::write(specs_dir.join("roadmap.arf"), &roadmap_content)?;
+
+    println!();
+    println!("{}", "=".repeat(50).dimmed());
+    println!("{} Generated {} specs:", "spec:".cyan().bold(), specs.len());
+    println!();
+    println!("  {} roadmap.arf", "+".green());
+
+    for (name, spec) in &specs {
+        let filename = format!("{:02}-{}.arf", spec.order, name);
+        let path = specs_dir.join(&filename);
+        fs::write(&path, format_spec(spec))?;
+        println!("  {} {}", "+".green(), filename);
+    }
+
+    println!();
+    println!("{}", "Review with: arf spec list".dimmed());
+
+    Ok(())
+}
+
 fn parse_specs(output: &str) -> Result<Vec<(String, SpecEntry)>> {
     let mut specs = Vec::new();
-
-    // Find all [spec.name] sections
     let mut current_name: Option<String> = None;
     let mut current_block = String::new();
 
     for line in output.lines() {
         let trimmed = line.trim();
 
-        // Check for [spec.name] header
         if trimmed.starts_with("[spec.") && trimmed.ends_with(']') {
-            // Save previous block if exists
             if let Some(name) = current_name.take() {
                 if let Ok(entry) = parse_single_spec(&current_block) {
                     specs.push((name, entry));
                 }
             }
 
-            // Extract name
             let name = trimmed
                 .trim_start_matches("[spec.")
                 .trim_end_matches(']')
@@ -156,13 +327,11 @@ fn parse_specs(output: &str) -> Result<Vec<(String, SpecEntry)>> {
             current_name = Some(name);
             current_block.clear();
         } else if current_name.is_some() && !trimmed.starts_with("```") {
-            // Accumulate lines for current block
             current_block.push_str(line);
             current_block.push('\n');
         }
     }
 
-    // Don't forget last block
     if let Some(name) = current_name {
         if let Ok(entry) = parse_single_spec(&current_block) {
             specs.push((name, entry));
