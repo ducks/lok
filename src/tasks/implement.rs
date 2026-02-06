@@ -378,10 +378,10 @@ fn clean_code_output(code: &str) -> Option<String> {
         "The file is ready",
     ];
 
-    let first_100 = &code[..code.len().min(100)].to_lowercase();
+    let first_150 = &code[..code.len().min(150)].to_lowercase();
     for pattern in bad_patterns {
-        if first_100.contains(&pattern.to_lowercase()) {
-            return None; // This is not code
+        if first_150.contains(&pattern.to_lowercase()) {
+            return None; // Backend didn't output code
         }
     }
 
@@ -403,34 +403,7 @@ fn clean_code_output(code: &str) -> Option<String> {
         code.to_string()
     };
 
-    // Final check: does it look like code? (starts with common patterns)
-    let first_line = cleaned.lines().next().unwrap_or("");
-    let looks_like_code = first_line.starts_with("use ")
-        || first_line.starts_with("//")
-        || first_line.starts_with("#")
-        || first_line.starts_with("pub ")
-        || first_line.starts_with("mod ")
-        || first_line.starts_with("fn ")
-        || first_line.starts_with("struct ")
-        || first_line.starts_with("enum ")
-        || first_line.starts_with("impl ")
-        || first_line.starts_with("const ")
-        || first_line.starts_with("static ")
-        || first_line.starts_with("type ")
-        || first_line.starts_with("trait ")
-        || first_line.starts_with("#!")
-        || first_line.starts_with("import ")
-        || first_line.starts_with("from ")
-        || first_line.starts_with("package ")
-        || first_line.starts_with("class ")
-        || first_line.starts_with("interface ")
-        || first_line.is_empty(); // Allow empty first line (could have leading comment)
-
-    if looks_like_code || cleaned.lines().count() > 5 {
-        Some(cleaned)
-    } else {
-        None
-    }
+    Some(cleaned)
 }
 
 fn run_verification(dir: &Path) -> Result<()> {
