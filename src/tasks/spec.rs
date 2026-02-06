@@ -22,6 +22,7 @@ For each subtask, output a TOML block with this exact format:
 
 ```toml
 [spec.name_of_subtask]
+order = 1
 what = "One-line description of what to build"
 why = "Why this subtask is needed, what problem it solves"
 how = "Implementation approach, key algorithms or patterns to use"
@@ -32,12 +33,18 @@ dependencies = ["list", "of", "other", "subtask", "names"]
 tests = "How to verify this works correctly"
 ```
 
-Use snake_case for subtask names. Order subtasks by dependency (foundations first).
+IMPORTANT:
+- Use snake_case for subtask names
+- The `order` field is REQUIRED and must be a number starting at 1
+- Order by dependency: foundations first (order=1), then things that depend on them (order=2), etc.
+- Subtasks with the same order number can be built in parallel
 
 Output ONLY the TOML blocks, no other text."#;
 
 #[derive(Debug, Deserialize)]
 struct SpecEntry {
+    #[serde(default)]
+    order: u32,
     what: String,
     why: String,
     #[serde(default)]
@@ -80,17 +87,25 @@ pub async fn run(
         .ok_or_else(|| anyhow::anyhow!("All backends failed to generate specs"))?;
 
     // Parse specs from output
-    let specs = parse_specs(output)?;
+    let mut specs = parse_specs(output)?;
 
     if specs.is_empty() {
         anyhow::bail!("No specs parsed from LLM output");
     }
 
+    // Sort by order
+    specs.sort_by_key(|(_, spec)| spec.order);
+
     // Create .arf/specs directory
     let specs_dir = dir.join(".arf").join("specs");
     fs::create_dir_all(&specs_dir).context("Failed to create .arf/specs directory")?;
 
-    // Write each spec
+    // Write roadmap first
+    let roadmap_content = format_roadmap(task, &specs);
+    let roadmap_path = specs_dir.join("roadmap.arf");
+    fs::write(&roadmap_path, &roadmap_content).context("Failed to write roadmap.arf")?;
+
+    // Write each spec with numbered prefix
     println!("{}", "=".repeat(50).dimmed());
     println!(
         "{} Generated {} specs in .arf/specs/:",
@@ -98,9 +113,10 @@ pub async fn run(
         specs.len()
     );
     println!();
+    println!("  {} roadmap.arf", "+".green());
 
     for (name, spec) in &specs {
-        let filename = format!("{}.arf", name);
+        let filename = format!("{:02}-{}.arf", spec.order, name);
         let path = specs_dir.join(&filename);
         let content = format_spec(spec);
         fs::write(&path, &content).with_context(|| format!("Failed to write {}", filename))?;
@@ -160,9 +176,32 @@ fn parse_single_spec(block: &str) -> Result<SpecEntry> {
     toml::from_str(block).context("Failed to parse spec TOML")
 }
 
+fn format_roadmap(task: &str, specs: &[(String, SpecEntry)]) -> String {
+    let mut out = String::new();
+
+    out.push_str(&format!("what = {:?}\n", task));
+    out.push_str("why = \"Structured implementation plan with dependency ordering\"\n");
+    out.push('\n');
+
+    for (name, spec) in specs {
+        out.push_str("[[steps]]\n");
+        out.push_str(&format!("order = {}\n", spec.order));
+        out.push_str(&format!("spec = {:?}\n", name));
+        out.push_str(&format!("file = \"{:02}-{}.arf\"\n", spec.order, name));
+        out.push_str(&format!("summary = {:?}\n", spec.what));
+        if !spec.dependencies.is_empty() {
+            out.push_str(&format!("depends_on = {:?}\n", spec.dependencies));
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
 fn format_spec(spec: &SpecEntry) -> String {
     let mut out = String::new();
 
+    out.push_str(&format!("order = {}\n", spec.order));
     out.push_str(&format!("what = {:?}\n", spec.what));
     out.push_str(&format!("why = {:?}\n", spec.why));
 
