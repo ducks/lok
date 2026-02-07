@@ -459,7 +459,7 @@ async fn main() -> Result<()> {
                 println!("{} lok.toml already exists", "✓".green());
             }
             if agent {
-                git_agent::init_worktree(Path::new(".")).await?;
+                arf::init_worktree(Path::new(".")).await?;
             }
         }
         Commands::Report {

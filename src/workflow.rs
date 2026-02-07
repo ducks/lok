@@ -9,7 +9,7 @@
 //! - `apply_edits` parses JSON edits from LLM output and applies them
 //! - `verify` runs a shell command after edits to validate them
 
-use crate::arf::ArfRecorder;
+use crate::arf::{self, ArfRecorder};
 use crate::backend;
 use crate::config::Config;
 use crate::context::{resolve_format_command, resolve_verify_command, CodebaseContext};
@@ -395,7 +395,8 @@ pub struct WorkflowRunner {
 impl WorkflowRunner {
     pub fn new(config: Config, cwd: PathBuf, args: Vec<String>) -> Self {
         let context = CodebaseContext::detect(&cwd);
-        let agent_enabled = git_agent::has_agent_worktree(&cwd);
+        // Support both .arf/ and .agent/ worktrees for backwards compatibility
+        let agent_enabled = arf::has_arf_worktree(&cwd) || git_agent::has_agent_worktree(&cwd);
         let arf = Arc::new(Mutex::new(ArfRecorder::new(&cwd)));
         Self {
             config,
@@ -414,8 +415,14 @@ impl WorkflowRunner {
         let mut results: HashMap<String, StepResult> = HashMap::new();
         let mut ordered_results: Vec<StepResult> = Vec::new();
 
+        // Get code commit at workflow start for linking records
+        let code_commit = arf::get_code_head(&self.cwd).await.ok();
+
         // Record workflow start
         if let Ok(mut arf) = self.arf.lock() {
+            if let Some(ref sha) = code_commit {
+                arf.set_code_commit(sha.clone());
+            }
             let _ = arf.workflow_start(&workflow.name, workflow.description.as_deref());
         }
 
@@ -1349,8 +1356,8 @@ impl WorkflowRunner {
                 })
                 .collect();
 
-            // Get current code commit for linking
-            let code_commit = git_agent::get_code_head(&self.cwd).await.ok();
+            // Get current code commit for linking (may have changed during workflow)
+            let code_commit = arf::get_code_head(&self.cwd).await.ok();
 
             // Extract reasoning from debate/synthesis steps
             let reasoning_steps = ["debate", "synthesize", "fix", "propose"];
@@ -1411,6 +1418,30 @@ impl WorkflowRunner {
                 successful,
                 failed,
             );
+        }
+
+        // Commit ARF records to worktree if enabled
+        if arf::has_arf_worktree(&self.cwd) {
+            let commit_msg = format!(
+                "Workflow: {} ({}/{})",
+                workflow.name,
+                successful,
+                successful + failed
+            );
+            // Don't hold the lock across await - use commit_records directly
+            match arf::commit_records(&self.cwd, &commit_msg).await {
+                Ok(sha) if !sha.is_empty() && sha != "no-change" => {
+                    println!(
+                        "{} ARF records committed: {}",
+                        "✓".green().dimmed(),
+                        &sha[..8.min(sha.len())]
+                    );
+                }
+                Ok(_) => {} // empty or no-change is fine
+                Err(e) => {
+                    println!("{} ARF commit failed: {}", "⚠".yellow().dimmed(), e);
+                }
+            }
         }
 
         Ok(ordered_results)
