@@ -1,0 +1,13 @@
+what = "Query backend: claude"
+why = "Step 'fix' requires LLM analysis"
+how = """
+Prompt: Implement the consensus fix for Issue #153: Bug: for_each iterations don't retry on timeout
+
+The deb..."""
+backup = "Retry with exponential backoff on transient failure"
+
+[context]
+timestamp = "2026-02-07T06:29:27.861537641+00:00"
+workflow = "pick-and-fix"
+step = "fix"
+backend = "claude"

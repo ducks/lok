@@ -1,0 +1,8 @@
+what = "Start step: debate"
+why = "Query claude backend"
+
+[context]
+timestamp = "2026-02-07T06:29:13.213307422+00:00"
+workflow = "pick-and-fix"
+step = "debate"
+backend = "claude"

@@ -1,0 +1,8 @@
+what = "Start step: open_prs"
+why = "Query shell backend"
+
+[context]
+timestamp = "2026-02-07T06:28:21.734631956+00:00"
+workflow = "pick-and-fix"
+step = "open_prs"
+backend = "shell"

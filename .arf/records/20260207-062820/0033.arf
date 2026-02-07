@@ -1,0 +1,10 @@
+what = "Apply edit to src/workflow.rs"
+why = "LLM proposed code change"
+backup = "Rollback via git if verification fails"
+outcome = "success"
+
+[context]
+timestamp = "2026-02-07T06:30:14.819496351+00:00"
+workflow = "pick-and-fix"
+step = "fix"
+file = "src/workflow.rs"

@@ -1,0 +1,9 @@
+what = "Complete step: setup"
+why = "Step succeeded in 1234ms"
+outcome = "success"
+
+[context]
+timestamp = "2026-02-07T06:28:21.733607813+00:00"
+workflow = "pick-and-fix"
+step = "setup"
+elapsed_ms = 1234

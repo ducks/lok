@@ -1,0 +1,6 @@
+what = "Start workflow: pick-and-fix"
+why = "Pick the best open issue and fix it with multi-backend consensus"
+
+[context]
+timestamp = "2026-02-07T06:28:20.492759786+00:00"
+workflow = "pick-and-fix"

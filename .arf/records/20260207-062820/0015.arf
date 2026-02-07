@@ -1,0 +1,13 @@
+what = "Query backend: claude"
+why = "Step 'propose_claude' requires LLM analysis"
+how = """
+Prompt: Analyze and propose a fix for this issue:
+
+Issue #153: Bug: for_each iterations don't retry on timeo..."""
+backup = "Retry with exponential backoff on transient failure"
+
+[context]
+timestamp = "2026-02-07T06:28:31.468254918+00:00"
+workflow = "pick-and-fix"
+step = "propose_claude"
+backend = "claude"

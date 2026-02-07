@@ -1,0 +1,8 @@
+what = "Start step: list"
+why = "Query shell backend"
+
+[context]
+timestamp = "2026-02-07T06:28:21.734063144+00:00"
+workflow = "pick-and-fix"
+step = "list"
+backend = "shell"

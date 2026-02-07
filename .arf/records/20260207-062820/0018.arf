@@ -1,0 +1,8 @@
+what = "Start step: propose_gemini"
+why = "Query gemini backend"
+
+[context]
+timestamp = "2026-02-07T06:28:31.468916985+00:00"
+workflow = "pick-and-fix"
+step = "propose_gemini"
+backend = "gemini"

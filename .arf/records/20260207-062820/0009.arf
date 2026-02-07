@@ -1,0 +1,13 @@
+what = "Query backend: claude"
+why = "Step 'pick' requires LLM analysis"
+how = '''
+Prompt: Here are the open issues for this repo:
+
+[{"body":"## Problem\n\nThe `fix` step in pick-and-fix freq...'''
+backup = "Retry with exponential backoff on transient failure"
+
+[context]
+timestamp = "2026-02-07T06:28:22.273622600+00:00"
+workflow = "pick-and-fix"
+step = "pick"
+backend = "claude"

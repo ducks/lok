@@ -1,0 +1,8 @@
+what = "Verify: cargo fmt && cargo fix --allow-dirty --allow-staged 2>/dev/null; cargo clippy -- -D warnings && cargo build"
+why = "Validate applied changes"
+outcome = "success"
+
+[context]
+timestamp = "2026-02-07T06:30:21.177482943+00:00"
+workflow = "pick-and-fix"
+step = "fix"

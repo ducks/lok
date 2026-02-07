@@ -718,34 +718,16 @@ impl WorkflowRunner {
                                     items.len()
                                 );
 
-                                let iter_output: String;
-                                let iter_success: bool;
+                                let mut iter_output = String::new();
+                                let mut iter_success = false;
+                                let mut last_error = String::new();
 
-                                // Shell iteration
-                                if let Some(ref shell_cmd) = iter_shell {
-                                    match tokio::time::timeout(timeout_duration, run_shell(shell_cmd, &cwd, self.config.defaults.command_wrapper.as_deref())).await {
-                                        Ok(Ok(output)) => {
-                                            iter_output = output;
-                                            iter_success = true;
-                                        }
-                                        Ok(Err(e)) => {
-                                            iter_output = format!("Error: {}", e);
-                                            iter_success = false;
-                                            all_success = false;
-                                        }
-                                        Err(_) => {
-                                            iter_output = format!("Error: Step timed out after {}s", timeout_duration.as_secs());
-                                            iter_success = false;
-                                            all_success = false;
-                                        }
-                                    }
-                                } else {
-                                    // LLM iteration
+                                // For LLM iterations, set up backend outside retry loop
+                                let backend_opt = if iter_shell.is_none() {
                                     let backend_config = match config.backends.get(&backend_name) {
                                         Some(cfg) => cfg,
                                         None => {
                                             iter_output = format!("Backend not found: {}", backend_name);
-                                            iter_success = false;
                                             all_success = false;
                                             iteration_results.push(serde_json::json!({
                                                 "index": index,
@@ -757,11 +739,10 @@ impl WorkflowRunner {
                                         }
                                     };
 
-                                    let backend = match backend::create_backend(&backend_name, backend_config) {
-                                        Ok(b) => b,
+                                    match backend::create_backend(&backend_name, backend_config) {
+                                        Ok(b) => Some(b),
                                         Err(e) => {
                                             iter_output = format!("Failed to create backend: {}", e);
-                                            iter_success = false;
                                             all_success = false;
                                             iteration_results.push(serde_json::json!({
                                                 "index": index,
@@ -771,22 +752,63 @@ impl WorkflowRunner {
                                             }));
                                             continue;
                                         }
+                                    }
+                                } else {
+                                    None
+                                };
+
+                                // Retry loop for iteration execution
+                                for attempt in 0..=max_retries {
+                                    if attempt > 0 {
+                                        let delay = retry_delay * 2_u64.pow(attempt - 1);
+                                        // Record retry attempt
+                                        if let Ok(mut arf) = arf.lock() {
+                                            let backend_type = if iter_shell.is_some() { "shell" } else { &backend_name };
+                                            let _ = arf.retry_attempt(&workflow_name, &step_name, backend_type, attempt, &last_error);
+                                        }
+                                        println!(
+                                            "      {} Retry {}/{} in {}ms...",
+                                            "↻".yellow(),
+                                            attempt,
+                                            max_retries,
+                                            delay
+                                        );
+                                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                                    }
+
+                                    // Consolidated execution: shell or LLM
+                                    let result = if let Some(ref shell_cmd) = iter_shell {
+                                        tokio::time::timeout(
+                                            timeout_duration,
+                                            run_shell(shell_cmd, &cwd, config.defaults.command_wrapper.as_deref())
+                                        ).await
+                                    } else {
+                                        let backend = backend_opt.as_ref().unwrap();
+                                        tokio::time::timeout(
+                                            timeout_duration,
+                                            backend.query(&iter_prompt, &cwd)
+                                        ).await
                                     };
 
-                                    match tokio::time::timeout(timeout_duration, backend.query(&iter_prompt, &cwd)).await {
-                                        Ok(Ok(text)) => {
-                                            iter_output = text;
+                                    match result {
+                                        Ok(Ok(output)) => {
+                                            iter_output = output;
                                             iter_success = true;
+                                            break;
                                         }
                                         Ok(Err(e)) => {
-                                            iter_output = format!("Error: {}", e);
-                                            iter_success = false;
-                                            all_success = false;
+                                            last_error = e.to_string();
+                                            if attempt == max_retries {
+                                                iter_output = format!("Error after {} retries: {}", max_retries + 1, last_error);
+                                                all_success = false;
+                                            }
                                         }
                                         Err(_) => {
-                                            iter_output = format!("Error: Step timed out after {}s", timeout_duration.as_secs());
-                                            iter_success = false;
-                                            all_success = false;
+                                            last_error = format!("Step timed out after {}s", timeout_duration.as_secs());
+                                            if attempt == max_retries {
+                                                iter_output = format!("Error after {} retries: {}", max_retries + 1, last_error);
+                                                all_success = false;
+                                            }
                                         }
                                     }
                                 }
