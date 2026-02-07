@@ -15,7 +15,7 @@ enabled = true
 command = "http://localhost:11434"
 args = []
 skip_lines = 0
-model = "llama3.2"
+model = "qwen3-coder-next:latest"
 
 [backends.gemini]
 enabled = true

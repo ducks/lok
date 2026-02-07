@@ -194,6 +194,12 @@ pub struct Workflow {
     pub extends: Option<String>,
     #[serde(default)]
     pub steps: Vec<Step>,
+    /// Default continue_on_error for all steps (steps can override)
+    #[serde(default)]
+    pub continue_on_error: bool,
+    /// Default timeout for all steps in milliseconds (steps can override)
+    #[serde(default)]
+    pub timeout: Option<u64>,
 }
 
 impl Workflow {
@@ -212,7 +218,8 @@ impl Workflow {
                 }
             }
             // Validate timeout: 0 means no timeout, but values between 1 and MIN are likely mistakes
-            if let Some(timeout) = step.timeout {
+            let effective_timeout = self.step_timeout(step);
+            if let Some(timeout) = effective_timeout {
                 if timeout > 0 && timeout < MIN_TIMEOUT_MS {
                     return Err(WorkflowError::TimeoutTooSmall {
                         workflow: self.name.clone(),
@@ -224,6 +231,16 @@ impl Workflow {
             }
         }
         Ok(())
+    }
+
+    /// Get the effective continue_on_error for a step (step-level overrides workflow-level)
+    pub fn step_continue_on_error(&self, step: &Step) -> bool {
+        step.continue_on_error.unwrap_or(self.continue_on_error)
+    }
+
+    /// Get the effective timeout for a step (step-level overrides workflow-level)
+    pub fn step_timeout(&self, step: &Step) -> Option<u64> {
+        step.timeout.or(self.timeout)
     }
 }
 
@@ -275,9 +292,10 @@ pub struct Step {
     pub output_format: Option<String>,
 
     // Error handling
-    /// If true, workflow continues even if this step fails (default: false)
+    /// If true, workflow continues even if this step fails
+    /// If None, inherits from workflow-level continue_on_error (default: false)
     #[serde(default)]
-    pub continue_on_error: bool,
+    pub continue_on_error: Option<bool>,
 
     // Consensus requirement
     /// Minimum number of dependencies that must succeed (default: all)
@@ -458,7 +476,7 @@ impl WorkflowRunner {
                         // If it did, this is a "soft" failure and we should proceed
                         let dep_had_continue_on_error = step_map
                             .get(dep.as_str())
-                            .map(|s| s.continue_on_error)
+                            .map(|s| workflow.step_continue_on_error(s))
                             .unwrap_or(false);
 
                         // Only a "hard" failure if the dep didn't have continue_on_error
@@ -478,7 +496,7 @@ impl WorkflowRunner {
                             .unwrap_or(false);
                         let dep_had_continue_on_error = step_map
                             .get(dep.as_str())
-                            .map(|s| s.continue_on_error)
+                            .map(|s| workflow.step_continue_on_error(s))
                             .unwrap_or(false);
                         dep_failed && dep_had_continue_on_error
                     })
@@ -513,7 +531,7 @@ impl WorkflowRunner {
                             step.depends_on.len(),
                             min_success
                         );
-                        if step.continue_on_error {
+                        if workflow.step_continue_on_error(step) {
                             println!("{} {} ({})", "[skip]".yellow(), step.name.bold(), msg);
                             let skip_result = StepResult {
                                 name: step.name.clone(),
@@ -546,7 +564,7 @@ impl WorkflowRunner {
                         }
                     }
                 } else if !hard_failed_deps.is_empty() {
-                    if step.continue_on_error {
+                    if workflow.step_continue_on_error(step) {
                         println!(
                             "{} {} (dependency failed: {})",
                             "[skip]".yellow(),
@@ -644,7 +662,7 @@ impl WorkflowRunner {
                     let apply_edits_flag = step.apply_edits;
                     let max_retries = step.retries;
                     let retry_delay = step.retry_delay;
-                    let step_timeout = step.timeout;
+                    let step_timeout = workflow.step_timeout(step);
 
                     async move {
                         println!("{} {}", "[step]".cyan(), step_name.bold());
@@ -2301,6 +2319,10 @@ fn merge_workflows(parent: Workflow, child: Workflow) -> Workflow {
         description: child.description.or(parent.description),
         extends: None, // Clear extends after merging
         steps: merged_steps,
+        // Child's continue_on_error takes precedence if true, else inherit from parent
+        continue_on_error: child.continue_on_error || parent.continue_on_error,
+        // Child's timeout takes precedence if set
+        timeout: child.timeout.or(parent.timeout),
     }
 }
 
@@ -2533,7 +2555,7 @@ line2"}"#;
                 retry_delay: 1000,
                 for_each: None,
                 output_format: None,
-                continue_on_error: false,
+                continue_on_error: None,
                 min_deps_success: None,
                 timeout: None,
             },
@@ -2550,7 +2572,7 @@ line2"}"#;
                 retry_delay: 1000,
                 for_each: None,
                 output_format: None,
-                continue_on_error: false,
+                continue_on_error: None,
                 min_deps_success: None,
                 timeout: None,
             },
@@ -2590,7 +2612,7 @@ line2"}"#;
             retry_delay: 1000,
             for_each: None,
             output_format: None,
-            continue_on_error: false,
+            continue_on_error: None,
             min_deps_success: Some(2), // Requires 2 deps but has none
             timeout: None,
         }];
@@ -2633,7 +2655,7 @@ line2"}"#;
                 retry_delay: 1000,
                 for_each: None,
                 output_format: None,
-                continue_on_error: false,
+                continue_on_error: None,
                 min_deps_success: None,
                 timeout: None,
             },
@@ -2650,7 +2672,7 @@ line2"}"#;
                 retry_delay: 1000,
                 for_each: None,
                 output_format: None,
-                continue_on_error: false,
+                continue_on_error: None,
                 min_deps_success: None,
                 timeout: None,
             },
@@ -3377,14 +3399,14 @@ line2"}"#;
 
     #[test]
     fn test_continue_on_error_toml_parsing() {
-        // Test that continue_on_error defaults to false
+        // Test that continue_on_error defaults to None (inherit from workflow)
         let toml_str = r#"
             name = "test"
             backend = "claude"
             prompt = "test prompt"
         "#;
         let step: Step = toml::from_str(toml_str).unwrap();
-        assert!(!step.continue_on_error);
+        assert!(step.continue_on_error.is_none());
 
         // Test explicit true
         let toml_str = r#"
@@ -3394,7 +3416,7 @@ line2"}"#;
             continue_on_error = true
         "#;
         let step: Step = toml::from_str(toml_str).unwrap();
-        assert!(step.continue_on_error);
+        assert_eq!(step.continue_on_error, Some(true));
 
         // Test explicit false
         let toml_str = r#"
@@ -3404,7 +3426,40 @@ line2"}"#;
             continue_on_error = false
         "#;
         let step: Step = toml::from_str(toml_str).unwrap();
-        assert!(!step.continue_on_error);
+        assert_eq!(step.continue_on_error, Some(false));
+    }
+
+    #[test]
+    fn test_workflow_level_continue_on_error() {
+        // Test workflow-level continue_on_error inheritance
+        let toml_str = r#"
+            name = "test-workflow"
+            continue_on_error = true
+
+            [[steps]]
+            name = "step1"
+            backend = "claude"
+            prompt = "test"
+        "#;
+        let workflow: Workflow = toml::from_str(toml_str).unwrap();
+        assert!(workflow.continue_on_error);
+        // Step inherits from workflow
+        assert!(workflow.step_continue_on_error(&workflow.steps[0]));
+
+        // Test step override
+        let toml_str = r#"
+            name = "test-workflow"
+            continue_on_error = true
+
+            [[steps]]
+            name = "step1"
+            backend = "claude"
+            prompt = "test"
+            continue_on_error = false
+        "#;
+        let workflow: Workflow = toml::from_str(toml_str).unwrap();
+        // Step explicitly overrides to false
+        assert!(!workflow.step_continue_on_error(&workflow.steps[0]));
     }
 
     #[tokio::test]
