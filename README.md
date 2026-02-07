@@ -179,21 +179,39 @@ lok workflow list              # Now shows: diff (local)
 
 ### Consensus and Error Handling
 
-For multi-backend steps, you can require consensus and handle partial failures:
+For multi-backend steps, you can require consensus and handle partial failures.
+
+**Workflow-level defaults** apply to all steps (steps can override):
+
+```toml
+name = "my-workflow"
+continue_on_error = true    # All steps continue on failure by default
+timeout = 300000            # All steps get 5 minute timeout by default
+
+[[steps]]
+name = "fast_step"
+backend = "codex"
+timeout = 60000             # Override: this step gets 1 minute
+prompt = "Quick analysis..."
+
+[[steps]]
+name = "critical_step"
+backend = "claude"
+continue_on_error = false   # Override: this step must succeed
+prompt = "Important work..."
+```
+
+**Step-level consensus** for multi-backend synthesis:
 
 ```toml
 [[steps]]
 name = "propose_claude"
 backend = "claude"
-continue_on_error = true    # Don't fail workflow if this step times out
-timeout = 300000            # 5 minute timeout (milliseconds)
 prompt = "Propose a fix..."
 
 [[steps]]
 name = "propose_codex"
 backend = "codex"
-continue_on_error = true
-timeout = 300000
 prompt = "Propose a fix..."
 
 [[steps]]
