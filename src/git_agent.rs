@@ -243,7 +243,10 @@ pub async fn undo(cwd: &Path) -> Result<bool, String> {
     }
 }
 
+// Legacy constants for .agent/ worktree (new code uses .arf/)
+#[allow(dead_code)]
 const AGENT_BRANCH: &str = "agent-history";
+#[allow(dead_code)]
 const AGENT_DIR: &str = ".agent";
 
 /// Check if the agent worktree is initialized
@@ -347,6 +350,9 @@ pub async fn get_code_head(cwd: &Path) -> Result<String> {
 /// Creates an orphan branch `agent-history` (no shared history with main)
 /// and mounts it as a worktree at `.agent/`. Agent checkpoints will be
 /// stored as real git commits on this branch.
+///
+/// DEPRECATED: Use `arf::init_worktree` instead for new code.
+#[allow(dead_code)]
 pub async fn init_worktree(cwd: &Path) -> Result<()> {
     let agent_path = cwd.join(AGENT_DIR);
 
