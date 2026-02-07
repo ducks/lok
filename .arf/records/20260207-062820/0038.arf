@@ -1,0 +1,8 @@
+what = "Start step: commit"
+why = "Query shell backend"
+
+[context]
+timestamp = "2026-02-07T06:30:21.188442935+00:00"
+workflow = "pick-and-fix"
+step = "commit"
+backend = "shell"

@@ -1,0 +1,9 @@
+what = "Complete step: open_prs"
+why = "Step succeeded in 527ms"
+outcome = "success"
+
+[context]
+timestamp = "2026-02-07T06:28:22.262368317+00:00"
+workflow = "pick-and-fix"
+step = "open_prs"
+elapsed_ms = 527
