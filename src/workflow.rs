@@ -9,6 +9,7 @@
 //! - `apply_edits` parses JSON edits from LLM output and applies them
 //! - `verify` runs a shell command after edits to validate them
 
+use crate::arf::ArfRecorder;
 use crate::backend;
 use crate::config::Config;
 use crate::context::{resolve_format_command, resolve_verify_command, CodebaseContext};
@@ -16,6 +17,7 @@ use crate::git_agent;
 use crate::utils::summarize_backend_error;
 use anyhow::{Context, Result};
 use colored::Colorize;
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 /// Typed errors for workflow execution
@@ -386,26 +388,36 @@ pub struct WorkflowRunner {
     context: CodebaseContext,
     /// Whether agent history tracking is enabled (worktree exists)
     agent_enabled: bool,
+    /// ARF recorder for structured reasoning traces
+    arf: Arc<Mutex<ArfRecorder>>,
 }
 
 impl WorkflowRunner {
     pub fn new(config: Config, cwd: PathBuf, args: Vec<String>) -> Self {
         let context = CodebaseContext::detect(&cwd);
         let agent_enabled = git_agent::has_agent_worktree(&cwd);
+        let arf = Arc::new(Mutex::new(ArfRecorder::new(&cwd)));
         Self {
             config,
             cwd,
             args,
             context,
             agent_enabled,
+            arf,
         }
     }
 
     /// Execute a workflow, returning results for each step
     /// Steps at the same depth level (no dependencies between them) run in parallel
     pub async fn run(&self, workflow: &Workflow) -> Result<Vec<StepResult>> {
+        let workflow_start = std::time::Instant::now();
         let mut results: HashMap<String, StepResult> = HashMap::new();
         let mut ordered_results: Vec<StepResult> = Vec::new();
+
+        // Record workflow start
+        if let Ok(mut arf) = self.arf.lock() {
+            let _ = arf.workflow_start(&workflow.name, workflow.description.as_deref());
+        }
 
         // Group steps by depth level for parallel execution
         let depth_levels = self.group_by_depth(&workflow.steps, &workflow.name)?;
@@ -663,10 +675,17 @@ impl WorkflowRunner {
                     let max_retries = step.retries;
                     let retry_delay = step.retry_delay;
                     let step_timeout = workflow.step_timeout(step);
+                    let arf = Arc::clone(&self.arf);
+                    let workflow_name = workflow.name.clone();
 
                     async move {
                         println!("{} {}", "[step]".cyan(), step_name.bold());
                         let start = std::time::Instant::now();
+
+                        // Record step start
+                        if let Ok(mut arf) = arf.lock() {
+                            let _ = arf.step_start(&workflow_name, &step_name, shell.as_ref().map(|_| "shell").or(Some(&backend_name)));
+                        }
 
                         // Calculate timeout duration (default 120s, 0 means no timeout)
                         let timeout_ms = step_timeout.unwrap_or(DEFAULT_STEP_TIMEOUT_MS);
@@ -812,6 +831,10 @@ impl WorkflowRunner {
                             for attempt in 0..=max_retries {
                                 if attempt > 0 {
                                     let delay = retry_delay * 2_u64.pow(attempt - 1);
+                                    // Record retry attempt for shell
+                                    if let Ok(mut arf) = arf.lock() {
+                                        let _ = arf.retry_attempt(&workflow_name, &step_name, "shell", attempt, &last_error);
+                                    }
                                     println!(
                                         "  {} Retry {}/{} in {}ms...",
                                         "↻".yellow(),
@@ -825,6 +848,10 @@ impl WorkflowRunner {
                                 match tokio::time::timeout(timeout_duration, run_shell(shell_cmd, &cwd, self.config.defaults.command_wrapper.as_deref())).await {
                                     Ok(Ok(output)) => {
                                         let elapsed_ms = start.elapsed().as_millis() as u64;
+                                        // Record step complete (success)
+                                        if let Ok(mut arf) = arf.lock() {
+                                            let _ = arf.step_complete(&workflow_name, &step_name, true, elapsed_ms, None);
+                                        }
                                         println!(
                                             "  {} ({:.1}s)",
                                             "✓".green(),
@@ -847,6 +874,10 @@ impl WorkflowRunner {
                                         last_error = e.to_string();
                                         if attempt == max_retries {
                                             let elapsed_ms = start.elapsed().as_millis() as u64;
+                                            // Record step complete (failure)
+                                            if let Ok(mut arf) = arf.lock() {
+                                                let _ = arf.step_complete(&workflow_name, &step_name, false, elapsed_ms, Some(&last_error));
+                                            }
                                             let summary = summarize_backend_error("shell", &e.to_string());
                                             println!("  {} {}", "✗".red(), summary);
                                             return StepResult {
@@ -865,6 +896,10 @@ impl WorkflowRunner {
                                         last_error = format!("Step timed out after {}s", timeout_duration.as_secs());
                                         if attempt == max_retries {
                                             let elapsed_ms = start.elapsed().as_millis() as u64;
+                                            // Record step complete (failure - timeout)
+                                            if let Ok(mut arf) = arf.lock() {
+                                                let _ = arf.step_complete(&workflow_name, &step_name, false, elapsed_ms, Some(&last_error));
+                                            }
                                             println!("  {} timed out after {}s", "✗".red(), timeout_duration.as_secs());
                                             return StepResult {
                                                 name: step_name,
@@ -882,6 +917,10 @@ impl WorkflowRunner {
 
                             // Should never reach here, but just in case
                             let elapsed_ms = start.elapsed().as_millis() as u64;
+                            // Record step complete (failure - fallback)
+                            if let Ok(mut arf) = arf.lock() {
+                                let _ = arf.step_complete(&workflow_name, &step_name, false, elapsed_ms, Some(&last_error));
+                            }
                             return StepResult {
                                 name: step_name,
                                 output: format!("Error: {}", last_error),
@@ -896,6 +935,10 @@ impl WorkflowRunner {
                         let backend_config = match config.backends.get(&backend_name) {
                             Some(cfg) => cfg,
                             None => {
+                                // Record step complete (failure - backend not found)
+                                if let Ok(mut arf) = arf.lock() {
+                                    let _ = arf.step_complete(&workflow_name, &step_name, false, 0, Some(&format!("Backend not found: {}", backend_name)));
+                                }
                                 return StepResult {
                                     name: step_name,
                                     output: format!("Backend not found: {}", backend_name),
@@ -910,6 +953,10 @@ impl WorkflowRunner {
                         let backend = match backend::create_backend(&backend_name, backend_config) {
                             Ok(b) => b,
                             Err(e) => {
+                                // Record step complete (failure - failed to create backend)
+                                if let Ok(mut arf) = arf.lock() {
+                                    let _ = arf.step_complete(&workflow_name, &step_name, false, 0, Some(&format!("Failed to create backend: {}", e)));
+                                }
                                 return StepResult {
                                     name: step_name,
                                     output: format!("Failed to create backend: {}", e),
@@ -922,6 +969,10 @@ impl WorkflowRunner {
                         };
 
                         if !backend.is_available() {
+                            // Record step complete (failure - backend not available)
+                            if let Ok(mut arf) = arf.lock() {
+                                let _ = arf.step_complete(&workflow_name, &step_name, false, 0, Some(&format!("Backend {} not available", backend_name)));
+                            }
                             println!("  {} Backend not available", "✗".red());
                             return StepResult {
                                 name: step_name,
@@ -941,6 +992,10 @@ impl WorkflowRunner {
                         for attempt in 0..=max_retries {
                             if attempt > 0 {
                                 let delay = retry_delay * 2_u64.pow(attempt - 1);
+                                // Record retry attempt
+                                if let Ok(mut arf) = arf.lock() {
+                                    let _ = arf.retry_attempt(&workflow_name, &step_name, &backend_name, attempt, &last_error);
+                                }
                                 println!(
                                     "  {} Retry {}/{} in {}ms...",
                                     "↻".yellow(),
@@ -951,18 +1006,38 @@ impl WorkflowRunner {
                                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                             }
 
+                            // Record backend query
+                            if let Ok(mut arf) = arf.lock() {
+                                let _ = arf.backend_query(&workflow_name, &step_name, &backend_name, &prompt);
+                            }
+
+                            let query_start = std::time::Instant::now();
                             match tokio::time::timeout(timeout_duration, backend.query(&prompt, &cwd)).await {
                                 Ok(Ok(t)) => {
+                                    let query_elapsed = query_start.elapsed().as_millis() as u64;
+                                    // Record successful backend response
+                                    if let Ok(mut arf) = arf.lock() {
+                                        let _ = arf.backend_response(&workflow_name, &step_name, &backend_name, true, query_elapsed, None);
+                                    }
                                     text = t;
                                     query_success = true;
                                     break;
                                 }
                                 Ok(Err(e)) => {
+                                    let query_elapsed = query_start.elapsed().as_millis() as u64;
                                     last_error = e.to_string();
+                                    // Record failed backend response
+                                    if let Ok(mut arf) = arf.lock() {
+                                        let _ = arf.backend_response(&workflow_name, &step_name, &backend_name, false, query_elapsed, Some(&last_error));
+                                    }
                                     if attempt == max_retries {
                                         let elapsed_ms = start.elapsed().as_millis() as u64;
                                         let summary = summarize_backend_error(&backend_name, &e.to_string());
                                         println!("  {} {} {}", "✗".red(), backend_name.to_uppercase(), summary);
+                                        // Record step complete (failure)
+                                        if let Ok(mut arf) = arf.lock() {
+                                            let _ = arf.step_complete(&workflow_name, &step_name, false, elapsed_ms, Some(&last_error));
+                                        }
                                         return StepResult {
                                             name: step_name,
                                             output: format!("Error: {}", e),
@@ -976,10 +1051,19 @@ impl WorkflowRunner {
                                     println!("  {} {} {} (will retry)", "⚠".yellow(), backend_name.to_uppercase(), summary);
                                 }
                                 Err(_) => {
+                                    let query_elapsed = query_start.elapsed().as_millis() as u64;
                                     last_error = format!("Step timed out after {}s", timeout_duration.as_secs());
+                                    // Record timeout as failed response
+                                    if let Ok(mut arf) = arf.lock() {
+                                        let _ = arf.backend_response(&workflow_name, &step_name, &backend_name, false, query_elapsed, Some(&last_error));
+                                    }
                                     if attempt == max_retries {
                                         let elapsed_ms = start.elapsed().as_millis() as u64;
                                         println!("  {} {} timed out after {}s", "✗".red(), backend_name.to_uppercase(), timeout_duration.as_secs());
+                                        // Record step complete (failure)
+                                        if let Ok(mut arf) = arf.lock() {
+                                            let _ = arf.step_complete(&workflow_name, &step_name, false, elapsed_ms, Some(&last_error));
+                                        }
                                         return StepResult {
                                             name: step_name,
                                             output: format!("Error: {}", last_error),
@@ -1028,39 +1112,55 @@ impl WorkflowRunner {
                                                     "⚠".yellow()
                                                 );
                                             } else {
-                                                match apply_edits(&agentic.edits, &cwd).await {
-                                                    Ok(count) => {
-                                                        println!(
-                                                            "    {} Applied {} edit(s)",
-                                                            "✓".green(),
-                                                            count
-                                                        );
-                                                    }
-                                                    Err(e) => {
-                                                        println!(
-                                                            "    {} Failed to apply edits: {}",
-                                                            "✗".red(),
-                                                            e
-                                                        );
-                                                        // Rollback via git-agent if we checkpointed
-                                                        if checkpointed {
-                                                            if let Ok(true) = git_agent::undo(&cwd).await {
-                                                                println!("    {} Rolled back via git-agent", "↩".cyan());
+                                                // Record each edit application
+                                                for edit in &agentic.edits {
+                                                    match apply_edits(std::slice::from_ref(edit), &cwd).await {
+                                                        Ok(_) => {
+                                                            // Record successful edit
+                                                            if let Ok(mut arf) = arf.lock() {
+                                                                let _ = arf.edit_apply(&workflow_name, &step_name, &edit.file, true, None);
                                                             }
                                                         }
-                                                        return StepResult {
-                                                            name: step_name,
-                                                            output: format!(
-                                                                "Edit failed: {}\n\nOriginal output:\n{}",
-                                                                e, text
-                                                            ),
-                                                            parsed_output: None,
-                                                            success: false,
-                                                            elapsed_ms,
-                                                            backend: Some(backend_name.clone()),
-                                                        };
+                                                        Err(e) => {
+                                                            // Record failed edit
+                                                            if let Ok(mut arf) = arf.lock() {
+                                                                let _ = arf.edit_apply(&workflow_name, &step_name, &edit.file, false, Some(&e.to_string()));
+                                                            }
+                                                            println!(
+                                                                "    {} Failed to apply edit to {}: {}",
+                                                                "✗".red(),
+                                                                edit.file,
+                                                                e
+                                                            );
+                                                            // Rollback via git-agent if we checkpointed
+                                                            if checkpointed {
+                                                                if let Ok(true) = git_agent::undo(&cwd).await {
+                                                                    println!("    {} Rolled back via git-agent", "↩".cyan());
+                                                                }
+                                                            }
+                                                            // Record step complete (failure)
+                                                            if let Ok(mut arf) = arf.lock() {
+                                                                let _ = arf.step_complete(&workflow_name, &step_name, false, elapsed_ms, Some(&e.to_string()));
+                                                            }
+                                                            return StepResult {
+                                                                name: step_name,
+                                                                output: format!(
+                                                                    "Edit failed: {}\n\nOriginal output:\n{}",
+                                                                    e, text
+                                                                ),
+                                                                parsed_output: None,
+                                                                success: false,
+                                                                elapsed_ms,
+                                                                backend: Some(backend_name.clone()),
+                                                            };
+                                                        }
                                                     }
                                                 }
+                                                println!(
+                                                    "    {} Applied {} edit(s)",
+                                                    "✓".green(),
+                                                    agentic.edits.len()
+                                                );
                                             }
                                         }
                                         Err(e) => {
@@ -1069,6 +1169,10 @@ impl WorkflowRunner {
                                                 "✗".red(),
                                                 e
                                             );
+                                            // Record step complete (failure)
+                                            if let Ok(mut arf) = arf.lock() {
+                                                let _ = arf.step_complete(&workflow_name, &step_name, false, elapsed_ms, Some(&e.to_string()));
+                                            }
                                             return StepResult {
                                                 name: step_name,
                                                 output: format!(
@@ -1112,8 +1216,16 @@ impl WorkflowRunner {
                                     match tokio::time::timeout(timeout_duration, run_shell(verify_cmd, &cwd, self.config.defaults.command_wrapper.as_deref())).await {
                                         Ok(Ok(_)) => {
                                             println!("    {} Verification passed", "✓".green());
+                                            // Record successful verification
+                                            if let Ok(mut arf) = arf.lock() {
+                                                let _ = arf.verification(&workflow_name, &step_name, verify_cmd, true, None);
+                                            }
                                         }
                                         Ok(Err(e)) => {
+                                            // Record failed verification
+                                            if let Ok(mut arf) = arf.lock() {
+                                                let _ = arf.verification(&workflow_name, &step_name, verify_cmd, false, Some(&e.to_string()));
+                                            }
                                             println!(
                                                 "    {} Verification failed: {}",
                                                 "✗".red(),
@@ -1124,6 +1236,10 @@ impl WorkflowRunner {
                                                 if let Ok(true) = git_agent::undo(&cwd).await {
                                                     println!("    {} Rolled back via git-agent", "↩".cyan());
                                                 }
+                                            }
+                                            // Record step complete (failure)
+                                            if let Ok(mut arf) = arf.lock() {
+                                                let _ = arf.step_complete(&workflow_name, &step_name, false, elapsed_ms, Some(&e.to_string()));
                                             }
                                             return StepResult {
                                                 name: step_name,
@@ -1138,12 +1254,21 @@ impl WorkflowRunner {
                                             };
                                         }
                                         Err(_) => {
+                                            let timeout_err = format!("Verification timed out after {}ms", timeout_ms);
+                                            // Record timeout verification
+                                            if let Ok(mut arf) = arf.lock() {
+                                                let _ = arf.verification(&workflow_name, &step_name, verify_cmd, false, Some(&timeout_err));
+                                            }
                                             println!("    {} Verification timed out after {}ms", "⚠".yellow(), timeout_ms);
                                             // Rollback via git-agent if we checkpointed
                                             if checkpointed {
                                                 if let Ok(true) = git_agent::undo(&cwd).await {
                                                     println!("    {} Rolled back via git-agent", "↩".cyan());
                                                 }
+                                            }
+                                            // Record step complete (failure)
+                                            if let Ok(mut arf) = arf.lock() {
+                                                let _ = arf.step_complete(&workflow_name, &step_name, false, elapsed_ms, Some(&timeout_err));
                                             }
                                             return StepResult {
                                                 name: step_name,
@@ -1160,6 +1285,11 @@ impl WorkflowRunner {
                                     }
                                 }
 
+                            // Record step complete (success)
+                            if let Ok(mut arf) = arf.lock() {
+                                let _ = arf.step_complete(&workflow_name, &step_name, true, elapsed_ms, None);
+                            }
+
                             let parsed = parse_step_output(
                                 &text,
                                 output_format.as_deref(),
@@ -1173,6 +1303,10 @@ impl WorkflowRunner {
                                 backend: Some(backend_name),
                             }
                         } else {
+                            // Record step complete (failure - should never reach here)
+                            if let Ok(mut arf) = arf.lock() {
+                                let _ = arf.step_complete(&workflow_name, &step_name, false, elapsed_ms, Some(&last_error));
+                            }
                             // Should never reach here given retry loop logic, but just in case
                             StepResult {
                                 name: step_name,
@@ -1263,6 +1397,20 @@ impl WorkflowRunner {
                     println!("{} Agent checkpoint failed: {}", "⚠".yellow().dimmed(), e);
                 }
             }
+        }
+
+        // Record workflow complete
+        let successful = ordered_results.iter().filter(|r| r.success).count();
+        let failed = ordered_results.iter().filter(|r| !r.success).count();
+        let all_success = failed == 0;
+        if let Ok(mut arf) = self.arf.lock() {
+            let _ = arf.workflow_complete(
+                &workflow.name,
+                all_success,
+                workflow_start.elapsed().as_millis() as u64,
+                successful,
+                failed,
+            );
         }
 
         Ok(ordered_results)
