@@ -76,7 +76,12 @@ impl<'a> Debate<'a> {
                 .first()
                 .map(|p| p.stance.clone())
                 .unwrap_or_default();
-            let markdown = self.build_markdown(&participants, &rounds, None);
+            let outcome = if positions.is_empty() {
+                Some("No participants responded")
+            } else {
+                Some("Single participant - no debate possible")
+            };
+            let markdown = self.build_markdown(&participants, &rounds, outcome);
             return Ok(DebateOutput { summary, markdown });
         }
 
