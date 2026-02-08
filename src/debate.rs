@@ -2,11 +2,17 @@ use crate::backend::{self, Backend};
 use crate::config::Config;
 use crate::utils::truncate;
 use anyhow::Result;
+use chrono::Utc;
 use colored::Colorize;
 use std::path::Path;
 use std::sync::Arc;
 
 const MAX_ROUNDS: usize = 3;
+
+pub struct DebateOutput {
+    pub summary: String,
+    pub markdown: String,
+}
 
 pub struct Debate<'a> {
     backends: Vec<Arc<dyn Backend>>,
@@ -18,6 +24,12 @@ pub struct Debate<'a> {
 struct Position {
     backend: String,
     stance: String,
+}
+
+struct RoundContent {
+    round: usize,
+    title: String,
+    positions: Vec<Position>,
 }
 
 impl<'a> Debate<'a> {
@@ -35,39 +47,66 @@ impl<'a> Debate<'a> {
         }
     }
 
-    pub async fn run(&self) -> Result<String> {
-        println!("{}", "Lok Debate".cyan().bold());
-        println!("{}", "=".repeat(50).dimmed());
-        println!("Topic: {}", self.topic);
-        println!();
+    pub async fn run(&self) -> Result<DebateOutput> {
+        let mut rounds: Vec<RoundContent> = Vec::new();
+        let participants: Vec<String> =
+            self.backends.iter().map(|b| b.name().to_string()).collect();
+
+        self.emit_header();
 
         // Round 1: Initial positions
-        println!("{}", "[Round 1: Initial Positions]".yellow().bold());
+        self.emit_round_header(1, "Initial Positions");
         let mut positions = self.get_initial_positions().await?;
         self.print_positions(&positions);
 
+        rounds.push(RoundContent {
+            round: 1,
+            title: "Initial Positions".to_string(),
+            positions: positions
+                .iter()
+                .map(|p| Position {
+                    backend: p.backend.clone(),
+                    stance: p.stance.clone(),
+                })
+                .collect(),
+        });
+
         if positions.len() < 2 {
-            return Ok(positions
+            let summary = positions
                 .first()
                 .map(|p| p.stance.clone())
-                .unwrap_or_default());
+                .unwrap_or_default();
+            let markdown = self.build_markdown(&participants, &rounds, None);
+            return Ok(DebateOutput { summary, markdown });
         }
 
         // Round 2+: Responses to each other
         for round in 2..=MAX_ROUNDS {
             println!();
-            println!(
-                "{}",
-                format!("[Round {}: Responses]", round).yellow().bold()
-            );
+            self.emit_round_header(round, "Responses");
 
             let new_positions = self.get_responses(&positions).await?;
+
+            rounds.push(RoundContent {
+                round,
+                title: "Responses".to_string(),
+                positions: new_positions
+                    .iter()
+                    .map(|p| Position {
+                        backend: p.backend.clone(),
+                        stance: p.stance.clone(),
+                    })
+                    .collect(),
+            });
 
             // Check for consensus
             if self.check_consensus(&new_positions) {
                 println!();
                 println!("{}", "[Consensus Reached]".green().bold());
-                return Ok(self.summarize_consensus(&new_positions));
+                let summary = self.summarize_consensus(&new_positions);
+                let markdown =
+                    self.build_markdown(&participants, &rounds, Some("Consensus Reached"));
+                return Ok(DebateOutput { summary, markdown });
             }
 
             positions = new_positions;
@@ -80,7 +119,63 @@ impl<'a> Debate<'a> {
             "{}",
             "[Final Positions - No Full Consensus]".yellow().bold()
         );
-        Ok(self.summarize_disagreement(&positions))
+        let summary = self.summarize_disagreement(&positions);
+        let markdown = self.build_markdown(&participants, &rounds, Some("No Full Consensus"));
+        Ok(DebateOutput { summary, markdown })
+    }
+
+    fn emit_header(&self) {
+        println!("{}", "Lok Debate".cyan().bold());
+        println!("{}", "=".repeat(50).dimmed());
+        println!("Topic: {}", self.topic);
+        println!();
+    }
+
+    fn emit_round_header(&self, round: usize, title: &str) {
+        println!(
+            "{}",
+            format!("[Round {}: {}]", round, title).yellow().bold()
+        );
+    }
+
+    fn build_markdown(
+        &self,
+        participants: &[String],
+        rounds: &[RoundContent],
+        outcome: Option<&str>,
+    ) -> String {
+        let mut md = String::new();
+
+        // Header with metadata
+        md.push_str("# Lok Debate Transcript\n\n");
+        md.push_str(&format!(
+            "**Date:** {}\n\n",
+            Utc::now().format("%Y-%m-%d %H:%M UTC")
+        ));
+        md.push_str(&format!("**Topic:** {}\n\n", self.topic));
+        md.push_str(&format!(
+            "**Participants:** {}\n\n",
+            participants.join(", ")
+        ));
+
+        if let Some(result) = outcome {
+            md.push_str(&format!("**Outcome:** {}\n\n", result));
+        }
+
+        md.push_str("---\n\n");
+
+        // Round content
+        for rc in rounds {
+            md.push_str(&format!("## Round {}: {}\n\n", rc.round, rc.title));
+
+            for pos in &rc.positions {
+                md.push_str(&format!("### {}\n\n", pos.backend.to_uppercase()));
+                md.push_str(&pos.stance);
+                md.push_str("\n\n");
+            }
+        }
+
+        md
     }
 
     async fn get_initial_positions(&self) -> Result<Vec<Position>> {

@@ -198,6 +198,10 @@ enum Commands {
         /// Specific backends to include (comma-separated)
         #[arg(short, long)]
         backend: Option<String>,
+
+        /// Write markdown transcript to file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 
     /// Suggest which backend to use for a task
@@ -495,12 +499,26 @@ async fn main() -> Result<()> {
             topic,
             dir,
             backend,
+            output,
         } => {
             let backends = backend::get_backends(&config, backend.as_deref())?;
             let debate = debate::Debate::new(backends, &topic, &dir, &config);
             let result = debate.run().await?;
             println!();
-            println!("{}", result);
+            println!("{}", result.summary);
+
+            if let Some(output_path) = output {
+                tokio::fs::write(&output_path, &result.markdown)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to write output to {}", output_path.display())
+                    })?;
+                println!(
+                    "{} Transcript written to {}",
+                    "✓".green(),
+                    output_path.display()
+                );
+            }
         }
         Commands::Suggest { task } => {
             let delegator = delegation::Delegator::new();

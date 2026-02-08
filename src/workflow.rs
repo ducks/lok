@@ -276,6 +276,9 @@ pub struct Step {
     /// Shell command to run after edits to verify they work
     #[serde(default)]
     pub verify: Option<String>,
+    /// Number of fix retries if verification fails (re-query LLM with error)
+    #[serde(default)]
+    pub fix_retries: u32,
 
     // Retry fields
     /// Number of retry attempts on failure (default 0 = no retries)
@@ -696,6 +699,7 @@ impl WorkflowRunner {
                     let backends_list = step.get_backends();
                     let consensus_strategy = step.get_consensus_strategy();
                     let apply_edits_flag = step.apply_edits;
+                    let fix_retries = step.fix_retries;
                     let max_retries = step.retries;
                     let retry_delay = step.retry_delay;
                     let step_timeout = workflow.step_timeout(step);
@@ -1225,9 +1229,17 @@ impl WorkflowRunner {
                         if query_success {
                             println!("  {} ({:.1}s)", "✓".green(), elapsed_ms as f64 / 1000.0);
 
+                            // Fix retry loop for apply/verify cycle
+                            let mut fix_attempt = 0u32;
+                            let mut current_text = text.clone();
+
+                            'fix_loop: loop {
                                 // Apply edits if requested
                                 let mut checkpointed = false;
                                 if apply_edits_flag {
+                                    if fix_attempt > 0 {
+                                        println!("  {} Fix attempt {}/{}...", "↻".yellow(), fix_attempt, fix_retries);
+                                    }
                                     println!("  {} Applying edits...", "→".cyan());
 
                                     // Create git-agent checkpoint before applying edits
@@ -1246,7 +1258,7 @@ impl WorkflowRunner {
                                         }
                                     }
 
-                                    match parse_edits(&text) {
+                                    match parse_edits(&current_text) {
                                         Ok(agentic) => {
                                             if agentic.edits.is_empty() {
                                                 println!(
@@ -1279,7 +1291,7 @@ impl WorkflowRunner {
                                                                 name: step_name,
                                                                 output: format!(
                                                                     "Edit failed: {}\n\nOriginal output:\n{}",
-                                                                    e, text
+                                                                    e, current_text
                                                                 ),
                                                                 parsed_output: None,
                                                                 success: false,
@@ -1307,7 +1319,7 @@ impl WorkflowRunner {
                                                 name: step_name,
                                                 output: format!(
                                                     "Parse failed: {}\n\nOriginal output:\n{}",
-                                                    e, text
+                                                    e, current_text
                                                 ),
                                                 parsed_output: None,
                                                 success: false,
@@ -1346,14 +1358,14 @@ impl WorkflowRunner {
                                     match tokio::time::timeout(timeout_duration, run_shell(verify_cmd, &cwd, self.config.defaults.command_wrapper.as_deref())).await {
                                         Ok(Ok(_)) => {
                                             println!("    {} Verification passed", "✓".green());
-                                            // Record successful verification
+                                            break 'fix_loop;
                                         }
                                         Ok(Err(e)) => {
-                                            // Record failed verification
+                                            let error_msg = e.to_string();
                                             println!(
                                                 "    {} Verification failed: {}",
                                                 "✗".red(),
-                                                e
+                                                &error_msg
                                             );
                                             // Rollback via git-agent if we checkpointed
                                             if checkpointed {
@@ -1361,12 +1373,30 @@ impl WorkflowRunner {
                                                     println!("    {} Rolled back via git-agent", "↩".cyan());
                                                 }
                                             }
-                                            // Record step complete (failure)
+                                            // Check if we should retry
+                                            if fix_attempt < fix_retries {
+                                                fix_attempt += 1;
+                                                println!(
+                                                    "    {} Re-querying LLM with error (attempt {}/{})",
+                                                    "↻".yellow(),
+                                                    fix_attempt,
+                                                    fix_retries
+                                                );
+                                                let fix_prompt = format!(
+                                                    "{}\n\n## Previous Attempt Failed\n\nVerification error:\n```\n{}\n```\n\nPlease provide a corrected fix.",
+                                                    prompt, error_msg
+                                                );
+                                                if let Ok(new_response) = backend.query(&fix_prompt, &cwd).await {
+                                                    current_text = new_response;
+                                                    continue 'fix_loop;
+                                                }
+                                            }
+                                            // No retries left or re-query failed
                                             return StepResult {
                                                 name: step_name,
                                                 output: format!(
                                                     "Verification failed: {}\n\nOriginal output:\n{}",
-                                                    e, text
+                                                    e, current_text
                                                 ),
                                                 parsed_output: None,
                                                 success: false,
@@ -1375,19 +1405,38 @@ impl WorkflowRunner {
                                             };
                                         }
                                         Err(_) => {
-                                            println!("    {} Verification timed out after {}ms", "⚠".yellow(), timeout_ms);
+                                            let error_msg = format!("Verification timed out after {}ms", timeout_ms);
+                                            println!("    {} {}", "⚠".yellow(), &error_msg);
                                             // Rollback via git-agent if we checkpointed
                                             if checkpointed {
                                                 if let Ok(true) = git_agent::undo(&cwd).await {
                                                     println!("    {} Rolled back via git-agent", "↩".cyan());
                                                 }
                                             }
-                                            // Record step complete (failure)
+                                            // Check if we should retry
+                                            if fix_attempt < fix_retries {
+                                                fix_attempt += 1;
+                                                println!(
+                                                    "    {} Re-querying LLM with error (attempt {}/{})",
+                                                    "↻".yellow(),
+                                                    fix_attempt,
+                                                    fix_retries
+                                                );
+                                                let fix_prompt = format!(
+                                                    "{}\n\n## Previous Attempt Failed\n\n{}\n\nPlease provide a corrected fix.",
+                                                    prompt, error_msg
+                                                );
+                                                if let Ok(new_response) = backend.query(&fix_prompt, &cwd).await {
+                                                    current_text = new_response;
+                                                    continue 'fix_loop;
+                                                }
+                                            }
+                                            // No retries left or re-query failed
                                             return StepResult {
                                                 name: step_name,
                                                 output: format!(
-                                                    "Verification timed out after {}ms\n\nOriginal output:\n{}",
-                                                    timeout_ms, text
+                                                    "{}\n\nOriginal output:\n{}",
+                                                    error_msg, current_text
                                                 ),
                                                 parsed_output: None,
                                                 success: false,
@@ -1398,15 +1447,19 @@ impl WorkflowRunner {
                                     }
                                 }
 
+                                // If we got here, verify passed (or no verify). Exit loop.
+                                break 'fix_loop;
+                            } // end 'fix_loop
+
                             // Record step complete (success)
 
                             let parsed = parse_step_output(
-                                &text,
+                                &current_text,
                                 output_format.as_deref(),
                             );
                             StepResult {
                                 name: step_name,
-                                output: text,
+                                output: current_text,
                                 parsed_output: parsed,
                                 success: true,
                                 elapsed_ms,
@@ -2764,6 +2817,7 @@ line2"}"#;
                 shell: Some("echo test".to_string()),
                 apply_edits: false,
                 verify: None,
+                fix_retries: 0,
                 retries: 0,
                 retry_delay: 1000,
                 for_each: None,
@@ -2783,6 +2837,7 @@ line2"}"#;
                 shell: Some("echo test2".to_string()),
                 apply_edits: false,
                 verify: None,
+                fix_retries: 0,
                 retries: 0,
                 retry_delay: 1000,
                 for_each: None,
@@ -2825,6 +2880,7 @@ line2"}"#;
             shell: Some("echo test".to_string()),
             apply_edits: false,
             verify: None,
+            fix_retries: 0,
             retries: 0,
             retry_delay: 1000,
             for_each: None,
@@ -2870,6 +2926,7 @@ line2"}"#;
                 shell: Some("echo early".to_string()),
                 apply_edits: false,
                 verify: None,
+                fix_retries: 0,
                 retries: 0,
                 retry_delay: 1000,
                 for_each: None,
@@ -2889,6 +2946,7 @@ line2"}"#;
                 shell: Some("echo late".to_string()),
                 apply_edits: false,
                 verify: None,
+                fix_retries: 0,
                 retries: 0,
                 retry_delay: 1000,
                 for_each: None,
