@@ -49,7 +49,7 @@ impl super::Backend for GeminiBackend {
         let escaped_prompt = prompt.replace("'", "'\\''");
         let shell_cmd = format!(
             "echo '' | {} {} '{}'",
-            &self.command,
+            self.command,
             self.args.join(" "),
             escaped_prompt
         );

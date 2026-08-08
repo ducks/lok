@@ -1365,7 +1365,7 @@ impl WorkflowRunner {
                                             println!(
                                                 "    {} Verification failed: {}",
                                                 "✗".red(),
-                                                &error_msg
+                                                error_msg
                                             );
                                             // Rollback via git-agent if we checkpointed
                                             if checkpointed {
@@ -1414,7 +1414,7 @@ impl WorkflowRunner {
                                         }
                                         Err(_) => {
                                             let error_msg = format!("Verification timed out after {}ms", timeout_ms);
-                                            println!("    {} {}", "⚠".yellow(), &error_msg);
+                                            println!("    {} {}", "⚠".yellow(), error_msg);
                                             // Rollback via git-agent if we checkpointed
                                             if checkpointed {
                                                 if let Ok(true) = git_agent::undo(&cwd).await {
