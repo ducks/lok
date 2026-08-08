@@ -1,5 +1,14 @@
 # Lok
 
+> **Superseded by [llm-mux](https://github.com/ducks/llm-mux).**
+>
+> llm-mux is where this work continues — the same idea (declarative TOML
+> workflows across multiple LLM backends), rebuilt with what Lok taught me.
+> Start there if you are picking this up today.
+>
+> Lok is no longer developed. It still runs, and the code stays up for anyone
+> who wants to read it, but it will not receive fixes or new features.
+
 Declarative multi-LLM orchestration. Define workflows in TOML, run them against
 multiple backends, get synthesized results.
 
